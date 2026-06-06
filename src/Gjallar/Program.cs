@@ -360,9 +360,43 @@ internal sealed class GjallarRenderer : IDisposable
 
     private static string MarqueeText(IEnumerable<ProviderFrame> frames) =>
         string.Join(" / ", frames
-            .Select(frame => SurfaceText(frame.Root))
+            .Select(MarqueeSegment)
             .Where(static text => !string.IsNullOrWhiteSpace(text))
-            .Take(24));
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(12));
+
+    private static string MarqueeSegment(ProviderFrame frame)
+    {
+        var parts = new List<string>();
+        var title = frame.Provider.Title ?? frame.Provider.Id;
+        if (!string.IsNullOrWhiteSpace(title))
+        {
+            parts.Add(title);
+        }
+
+        if (frame.Root.TryGetProperty("props", out var props) && props.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var key in new[] { "marqueeText", "summary", "status" })
+            {
+                if (props.TryGetProperty(key, out var value))
+                {
+                    var text = ValueString(value);
+                    if (!string.IsNullOrWhiteSpace(text) && !string.Equals(text, title, StringComparison.OrdinalIgnoreCase))
+                    {
+                        parts.Add(text);
+                    }
+                }
+            }
+        }
+
+        var detail = frame.Provider.Description;
+        if (!string.IsNullOrWhiteSpace(detail) && !parts.Any(part => string.Equals(part, detail, StringComparison.OrdinalIgnoreCase)))
+        {
+            parts.Add(detail);
+        }
+
+        return string.Join(" - ", parts.Select(static part => part.Replace('\r', ' ').Replace('\n', ' ').Trim()).Where(static part => part.Length > 0));
+    }
 
     private static string SurfaceText(JsonElement root)
     {
@@ -837,19 +871,16 @@ internal sealed class FrameDocument
         var glyphs = BuildMazePoetry(font, cells, frameIndex, tones, tape);
         var columns = Math.Max(1, (Width - 16) / Math.Max(1, font.Width));
         var top = TickerWindow(tape, frameIndex / 4, columns);
-        var bottom = TickerWindow(tape, -(frameIndex / 5), columns);
         var topColorIndex = tones.Add(8, 4, CultMathTone.Edge, font.Width);
-        var bottomColorIndex = tones.Add(8, Math.Max(0, Height - font.Height - 4), CultMathTone.Edge, font.Width);
         var colors = tones.Resolve();
         foreach (var glyph in glyphs)
         {
             DrawGlyph(font, glyph.X, glyph.Y, glyph.Character, colors[glyph.ColorIndex]);
         }
 
+        FillRect(new RectI(0, 0, Width, Math.Min(Height, font.Height + 8)), ColorBgra.Black);
         var topColor = colors[topColorIndex];
-        var bottomColor = colors[bottomColorIndex];
         DrawText(font, 8, 4, top, topColor, Width - 16);
-        DrawText(font, 8, Math.Max(0, Height - font.Height - 4), bottom, bottomColor, Width - 16);
     }
 
     public void DrawText(int fontIndex, int x, int y, string text, ColorBgra color) => DrawText(fonts[fontIndex], x, y, text, color, Width - x);
