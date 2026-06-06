@@ -45,6 +45,7 @@ Observed live status after marquee/gutter cut:
     "panels": 6,
     "gutterRows": 3,
     "gutterPolicy": "single-row-top-between-panels-bottom",
+    "gutterFlow": "alternating-serpentine-blocks",
     "marqueeChars": 3101
   }
 }
@@ -61,8 +62,8 @@ Observed live status after marquee/gutter cut:
 - Outputs: `gjallar.overview` composition state, framebuffer frames, sparse
   refresh streams, and agent-readable panel captures.
 - Derived state: pane weights, pixel rectangles, selected fonts, one-row gutter
-  cells, marquee glyph positions, dirty rectangles, glyph runs, and compact text
-  projections.
+  blocks, alternating serpentine marquee glyph positions, dirty rectangles,
+  glyph runs, and compact text projections.
 - Forbidden writers: discovery systems must not decide Gjallar layout; providers
   must not tune themselves for Nightwing; framebuffer backends must not invent
   provider truth; Gjallar must not synthesize status-noise marquee content from
@@ -152,8 +153,9 @@ Source: `https://en.wikipedia.org/wiki/Linux_framebuffer`
 - `FontAtlas.ForTextBox` picks a font per panel based on available pixel area
   and text pressure.
 - `FrameDocument` draws text, panels, gutters, marquee glyphs, and fills. It
-  lowers the incoming marquee as one continuous stream across the ordered gutter
-  cells instead of assigning independent text to each gutter row.
+  lowers the incoming marquee as one continuous stream across gutter blocks.
+  Adjacent gutter blocks alternate scroll direction, and the tape path reverses
+  at each block boundary so text can be followed between gutters.
 - `FramebufferDevice` maps or writes the Linux framebuffer.
 - 2026-06-06 live fix: rooted provider endpoints such as `/eve/deck/bifrost`
   must be resolved against the configured Odin deck authority before opening a
@@ -167,6 +169,9 @@ Source: `https://en.wikipedia.org/wiki/Linux_framebuffer`
   ticker segments. Odin publishes the canonical tape; Gjallar consumes it from
   the provider catalog and enforces one glyph row for top padding, one per
   inter-panel gutter band, and one for bottom padding.
+- 2026-06-07 gutter flow correction: the marquee is split into gutter blocks
+  again. Blocks alternate direction and share one serpentine tape path, rather
+  than flattening every gutter row into the same left-to-right stream.
 - Transport debt remains explicit: the live Nightwing body still consumes the
   compatibility Eve deck bridge. The target input organ is native CultNet /
   CultMesh typed state over the real GameCult transport, not a web-shaped

@@ -503,6 +503,7 @@ internal sealed class GjallarRenderer : IDisposable
                 gutterCells = sceneCache?.GutterCells.Count ?? 0,
                 gutterRows = sceneCache?.GutterCells.Select(static cell => cell.Row).Distinct().Count() ?? 0,
                 gutterPolicy = "single-row-top-between-panels-bottom",
+                gutterFlow = "alternating-serpentine-blocks",
                 marqueeChars = sceneCache?.MarqueeTape.Length ?? 0,
                 marqueeSample = Sample(sceneCache?.MarqueeTape ?? "", 160),
             },
@@ -885,6 +886,7 @@ internal sealed class FrameDocument
     private static void AddHorizontalGutterRow(List<GutterCell> cells, int columns, PsfFont font, int width, int row, int y)
     {
         var textY = Math.Max(0, y);
+        var forward = row % 2 == 0;
         for (var laneColumn = 0; laneColumn < columns; laneColumn++)
         {
             var x = laneColumn * font.Width;
@@ -893,7 +895,7 @@ internal sealed class FrameDocument
                 continue;
             }
 
-            cells.Add(new GutterCell(x, textY, row, laneColumn, true));
+            cells.Add(new GutterCell(x, textY, row, laneColumn, forward));
         }
     }
 
@@ -906,7 +908,17 @@ internal sealed class FrameDocument
 
         const int framesPerScrollCell = 8;
         var scroll = (frameIndex / framesPerScrollCell) % Math.Max(1, tape.Length);
-        var orderedCells = cells.OrderBy(static cell => cell.Row).ThenBy(static cell => cell.LaneColumn).ToArray();
+        var orderedCells = cells
+            .GroupBy(static cell => cell.Row)
+            .OrderBy(static group => group.Key)
+            .SelectMany(static group =>
+            {
+                var rowCells = group.OrderBy(static cell => cell.LaneColumn);
+                return group.First().Forward
+                    ? rowCells
+                    : rowCells.Reverse();
+            })
+            .ToArray();
         var glyphs = new List<GlyphCommand>();
         for (var index = 0; index < orderedCells.Length; index++)
         {
