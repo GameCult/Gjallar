@@ -12,14 +12,17 @@ regions may use different text resolutions.
   text grids, font-scale selection, framebuffer lowering, and future sparse
   refresh output.
 - Inputs: provider catalogs, provider-owned surface trees, display dimensions,
-  font assets, runtime flags, and eventually direct CultMesh subscriptions.
+  font assets, runtime flags, Odin's canonical marquee tape, and eventually
+  direct CultMesh subscriptions.
 - Outputs: `gjallar.overview` composition state, visible framebuffer frames,
   and renderer telemetry.
-- Derived state: pane weights, pixel rectangles, chosen font sizes, gutter
-  routes, dirty rectangles, glyph runs, and compact agent-readable projections.
+- Derived state: pane weights, pixel rectangles, chosen font sizes, one-row
+  gutter routes, marquee glyph positions, dirty rectangles, glyph runs, and
+  compact agent-readable projections.
 - Forbidden writers: discovery systems do not decide Gjallar layout; providers
   do not tune themselves for Nightwing; framebuffer backends do not invent
-  provider truth.
+  provider truth; Gjallar does not derive marquee content from provider status
+  summaries.
 - Shared paths: full-frame rendering, sparse refresh, future browser previews,
   and agent text capture should lower the same overview model.
 - Deletion line: any code that both discovers provider truth and decides final
@@ -32,9 +35,11 @@ regions may use different text resolutions.
 Odin provider catalog
   -> display provider selection
   -> provider surface fetch
+  -> canonical marquee tape passthrough
   -> synthetic gjallar.overview surface
   -> EveNode panel extraction
   -> weighted AABB packing
+  -> one-row gutter cell plan
   -> per-panel text pressure estimate
   -> PSF font selection
   -> frame draw commands

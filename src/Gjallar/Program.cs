@@ -348,7 +348,7 @@ internal sealed class GjallarRenderer : IDisposable
                     {
                         title = "Gjallar",
                         summary = $"{frames.Count} provider surfaces",
-                        marqueeText = MarqueeText(frames),
+                        marqueeText = catalog.MarqueeText ?? "",
                     },
                     children,
                 },
@@ -356,87 +356,6 @@ internal sealed class GjallarRenderer : IDisposable
             },
         };
         return JsonSerializer.SerializeToUtf8Bytes(document, JsonOptions);
-    }
-
-    private static string MarqueeText(IEnumerable<ProviderFrame> frames) =>
-        string.Join(" / ", frames
-            .Select(MarqueeSegment)
-            .Where(static text => !string.IsNullOrWhiteSpace(text))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .Take(12));
-
-    private static string MarqueeSegment(ProviderFrame frame)
-    {
-        var parts = new List<string>();
-        var title = frame.Provider.Title ?? frame.Provider.Id;
-        if (!string.IsNullOrWhiteSpace(title))
-        {
-            parts.Add(title);
-        }
-
-        if (frame.Root.TryGetProperty("props", out var props) && props.ValueKind == JsonValueKind.Object)
-        {
-            foreach (var key in new[] { "marqueeText", "summary", "status" })
-            {
-                if (props.TryGetProperty(key, out var value))
-                {
-                    var text = ValueString(value);
-                    if (!string.IsNullOrWhiteSpace(text) && !string.Equals(text, title, StringComparison.OrdinalIgnoreCase))
-                    {
-                        parts.Add(text);
-                    }
-                }
-            }
-        }
-
-        var detail = frame.Provider.Description;
-        if (!string.IsNullOrWhiteSpace(detail) && !parts.Any(part => string.Equals(part, detail, StringComparison.OrdinalIgnoreCase)))
-        {
-            parts.Add(detail);
-        }
-
-        return string.Join(" - ", parts.Select(static part => part.Replace('\r', ' ').Replace('\n', ' ').Trim()).Where(static part => part.Length > 0));
-    }
-
-    private static string SurfaceText(JsonElement root)
-    {
-        var parts = new List<string>();
-        Visit(root, node =>
-        {
-            if (!node.TryGetProperty("props", out var props) || props.ValueKind != JsonValueKind.Object)
-            {
-                return;
-            }
-            foreach (var key in new[] { "marqueeText", "title", "text", "summary", "value" })
-            {
-                if (props.TryGetProperty(key, out var value))
-                {
-                    var text = ValueString(value);
-                    if (!string.IsNullOrWhiteSpace(text))
-                    {
-                        parts.Add(text);
-                    }
-                }
-            }
-        });
-        return string.Join(" ", parts).Trim();
-    }
-
-    private static void Visit(JsonElement node, Action<JsonElement> visitor)
-    {
-        if (node.ValueKind != JsonValueKind.Object)
-        {
-            return;
-        }
-        visitor(node);
-        if (!node.TryGetProperty("children", out var children) || children.ValueKind != JsonValueKind.Array)
-        {
-            return;
-        }
-        foreach (var child in children.EnumerateArray())
-        {
-            Visit(child, visitor);
-        }
     }
 
     private static string StableId(string value) =>
@@ -582,6 +501,8 @@ internal sealed class GjallarRenderer : IDisposable
             {
                 panels = sceneCache?.Panels.Count ?? 0,
                 gutterCells = sceneCache?.GutterCells.Count ?? 0,
+                gutterRows = sceneCache?.GutterCells.Select(static cell => cell.Row).Distinct().Count() ?? 0,
+                gutterPolicy = "single-row-top-between-panels-bottom",
                 marqueeChars = sceneCache?.MarqueeTape.Length ?? 0,
                 marqueeSample = Sample(sceneCache?.MarqueeTape ?? "", 160),
             },
@@ -640,7 +561,7 @@ internal sealed class GjallarRenderer : IDisposable
 
 internal sealed record SceneCache(byte[] StateJson, IReadOnlyList<PackedPanel> Panels, IReadOnlyList<GutterCell> GutterCells, string MarqueeTape);
 internal readonly record struct FrameTimings(double CopyMs, double DecorMs, double GutterMs, double PresentMs);
-internal sealed record ProviderCatalog(IReadOnlyList<ProviderCatalogEntry> Providers);
+internal sealed record ProviderCatalog(IReadOnlyList<ProviderCatalogEntry> Providers, string? MarqueeText = null);
 internal sealed record ProviderCatalogEntry(
     string Id,
     string? Title,
@@ -869,18 +790,11 @@ internal sealed class FrameDocument
         var tones = new ToneBatch(Height, frameIndex);
         var tape = MarketPoetryTape(marqueeTape);
         var glyphs = BuildMazePoetry(font, cells, frameIndex, tones, tape);
-        var columns = Math.Max(1, (Width - 16) / Math.Max(1, font.Width));
-        var top = TickerWindow(tape, frameIndex / 4, columns);
-        var topColorIndex = tones.Add(8, 4, CultMathTone.Edge, font.Width);
         var colors = tones.Resolve();
         foreach (var glyph in glyphs)
         {
             DrawGlyph(font, glyph.X, glyph.Y, glyph.Character, colors[glyph.ColorIndex]);
         }
-
-        FillRect(new RectI(0, 0, Width, Math.Min(Height, font.Height + 8)), ColorBgra.Black);
-        var topColor = colors[topColorIndex];
-        DrawText(font, 8, 4, top, topColor, Width - 16);
     }
 
     public void DrawText(int fontIndex, int x, int y, string text, ColorBgra color) => DrawText(fonts[fontIndex], x, y, text, color, Width - x);
@@ -922,24 +836,26 @@ internal sealed class FrameDocument
     public static IReadOnlyList<GutterCell> BuildGutterCells(int width, int height, PsfFont font, IReadOnlyList<PackedPanel> panels, int edgeGutterHeight)
     {
         var columns = Math.Max(1, (width + Math.Max(1, font.Width) - 1) / Math.Max(1, font.Width));
-        var spans = MergeVerticalSpans(panels.Select(panel => (Start: panel.Rect.Y, End: panel.Rect.Y + panel.Rect.Height)));
+        var spans = MergeVerticalSpans(panels.Select(panel => (Start: panel.Rect.Y, End: panel.Rect.Y + panel.Rect.Height))).ToArray();
         var cells = new List<GutterCell>();
         var edge = Math.Clamp(edgeGutterHeight, font.Height, Math.Max(font.Height, height / 3));
         var lane = 0;
-        AddHorizontalGutterLane(cells, columns, font, width, lane++, 0, edge);
+        var edgeTextY = Math.Max(0, (edge - font.Height) / 2);
+        AddHorizontalGutterRow(cells, columns, font, width, lane++, edgeTextY);
 
-        var cursorY = edge;
-        var bottomStart = Math.Max(edge, height - edge);
-        foreach (var span in spans)
+        for (var index = 0; index < spans.Length - 1; index++)
         {
-            var start = Math.Clamp(span.Start, edge, bottomStart);
-            var end = Math.Clamp(span.End, edge, bottomStart);
-            AddHorizontalGutterLane(cells, columns, font, width, lane++, cursorY, Math.Max(0, start - cursorY));
-            cursorY = Math.Max(cursorY, end);
+            var gapStart = spans[index].End;
+            var gapEnd = spans[index + 1].Start;
+            var gapHeight = gapEnd - gapStart;
+            if (gapHeight >= font.Height)
+            {
+                AddHorizontalGutterRow(cells, columns, font, width, lane++, gapStart + Math.Max(0, (gapHeight - font.Height) / 2));
+            }
         }
 
-        AddHorizontalGutterLane(cells, columns, font, width, lane++, cursorY, Math.Max(0, bottomStart - cursorY));
-        AddHorizontalGutterLane(cells, columns, font, width, lane, bottomStart, Math.Max(0, height - bottomStart));
+        var bottomY = Math.Max(0, height - edge + edgeTextY);
+        AddHorizontalGutterRow(cells, columns, font, width, lane, bottomY);
         return cells;
     }
 
@@ -966,15 +882,9 @@ internal sealed class FrameDocument
         return merged;
     }
 
-    private static void AddHorizontalGutterLane(List<GutterCell> cells, int columns, PsfFont font, int width, int lane, int y, int height)
+    private static void AddHorizontalGutterRow(List<GutterCell> cells, int columns, PsfFont font, int width, int row, int y)
     {
-        if (height < font.Height)
-        {
-            return;
-        }
-
-        var textY = y + Math.Max(0, (height - font.Height) / 2);
-        var forward = lane % 2 == 0;
+        var textY = Math.Max(0, y);
         for (var laneColumn = 0; laneColumn < columns; laneColumn++)
         {
             var x = laneColumn * font.Width;
@@ -983,20 +893,25 @@ internal sealed class FrameDocument
                 continue;
             }
 
-            cells.Add(new GutterCell(x, textY, lane, laneColumn, forward));
+            cells.Add(new GutterCell(x, textY, row, laneColumn, true));
         }
     }
 
     private IReadOnlyList<GlyphCommand> BuildMazePoetry(PsfFont font, IReadOnlyList<GutterCell> cells, int frameIndex, ToneBatch tones, string tape)
     {
+        if (string.IsNullOrWhiteSpace(tape))
+        {
+            return [];
+        }
+
         const int framesPerScrollCell = 8;
         var scroll = (frameIndex / framesPerScrollCell) % Math.Max(1, tape.Length);
+        var orderedCells = cells.OrderBy(static cell => cell.Row).ThenBy(static cell => cell.LaneColumn).ToArray();
         var glyphs = new List<GlyphCommand>();
-        foreach (var cell in cells)
+        for (var index = 0; index < orderedCells.Length; index++)
         {
-            var tapeIndex = cell.Forward
-                ? cell.LaneColumn + scroll + cell.Row * 7
-                : cell.LaneColumn - scroll + cell.Row * 7;
+            var cell = orderedCells[index];
+            var tapeIndex = index - scroll;
             var character = tape[((tapeIndex % tape.Length) + tape.Length) % tape.Length];
             if (character == ' ')
             {
@@ -1009,28 +924,10 @@ internal sealed class FrameDocument
         return glyphs;
     }
 
-    private static string TickerWindow(string tape, int offset, int columns)
-    {
-        if (string.IsNullOrEmpty(tape) || columns <= 0)
-        {
-            return "";
-        }
-
-        var builder = new StringBuilder(columns);
-        for (var index = 0; index < columns; index++)
-        {
-            var tapeIndex = ((offset + index) % tape.Length + tape.Length) % tape.Length;
-            builder.Append(tape[tapeIndex]);
-        }
-        return builder.ToString();
-    }
-
     private static string MarketPoetryTape(string marqueeTape)
     {
-        var market = string.IsNullOrWhiteSpace(marqueeTape) ? "" : marqueeTape.Trim();
-        return string.IsNullOrWhiteSpace(market)
-            ? " wake the colossus / coherence over velocity / cultmesh carries signal / cultcache remembers / love is disciplined openness / no cache pretends to truth / "
-            : $" {market} / wake the colossus / ";
+        var tape = string.IsNullOrWhiteSpace(marqueeTape) ? "" : marqueeTape.Replace('\r', ' ').Replace('\n', ' ').Trim();
+        return string.IsNullOrWhiteSpace(tape) ? "" : $" {tape} / ";
     }
 
     private static void AddBorderCommands(RectI rect, ToneBatch tones, List<FillCommand> fills)

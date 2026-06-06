@@ -28,19 +28,24 @@ surface sources
 - Current deployment: Nightwing `gjallar.service`
 - Current feed: Odin provider catalog at `ws://192.168.1.66:8797/eve/deck`
 - Current status path on Nightwing: `/var/log/gjallar.status`
+- Current marquee input: Odin's provider catalog `marqueeText`, built from the
+  Stonks securities tape interwoven with ordered VoidBot poem lines.
 
-Observed live status after repo split:
+Observed live status after marquee/gutter cut:
 
 ```json
 {
   "schema": "gamecult.gjallar.frame.v1",
   "receive": {
     "status": "catalog-composed",
-    "catalogProviders": 4,
-    "composedProviders": 3
+    "catalogProviders": 7,
+    "composedProviders": 6
   },
   "scene": {
-    "panels": 3
+    "panels": 6,
+    "gutterRows": 3,
+    "gutterPolicy": "single-row-top-between-panels-bottom",
+    "marqueeChars": 3101
   }
 }
 ```
@@ -48,18 +53,23 @@ Observed live status after repo split:
 ## Authority Map
 
 - Owner: Gjallar owns display composition, pane partitioning, per-pane virtual
-  grids, font-scale choice, frame/cell lowering, and renderer telemetry.
+  grids, font-scale choice, gutter text continuity, frame/cell lowering, and
+  renderer telemetry.
 - Inputs: provider catalogs, provider-owned surface trees, display dimensions,
-  font assets, runtime flags, and later native CultMesh subscriptions.
+  font assets, runtime flags, Odin's canonical marquee tape, and later native
+  CultMesh subscriptions.
 - Outputs: `gjallar.overview` composition state, framebuffer frames, sparse
   refresh streams, and agent-readable panel captures.
-- Derived state: pane weights, pixel rectangles, selected fonts, gutter paths,
-  dirty rectangles, glyph runs, and compact text projections.
+- Derived state: pane weights, pixel rectangles, selected fonts, one-row gutter
+  cells, marquee glyph positions, dirty rectangles, glyph runs, and compact text
+  projections.
 - Forbidden writers: discovery systems must not decide Gjallar layout; providers
   must not tune themselves for Nightwing; framebuffer backends must not invent
-  provider truth.
+  provider truth; Gjallar must not synthesize status-noise marquee content from
+  provider summaries.
 - Cut line: code that discovers what exists belongs upstream. Code that decides
-  how a physical or virtual display shows it belongs in Gjallar.
+  what the canonical marquee says belongs upstream. Code that decides how a
+  physical or virtual display shows it belongs in Gjallar.
 
 ## Product Thesis
 
@@ -141,7 +151,9 @@ Source: `https://en.wikipedia.org/wiki/Linux_framebuffer`
 - `AabbPacker` owns weighted panel region packing.
 - `FontAtlas.ForTextBox` picks a font per panel based on available pixel area
   and text pressure.
-- `FrameDocument` draws text, panels, gutters, marquee, and fills.
+- `FrameDocument` draws text, panels, gutters, marquee glyphs, and fills. It
+  lowers the incoming marquee as one continuous stream across the ordered gutter
+  cells instead of assigning independent text to each gutter row.
 - `FramebufferDevice` maps or writes the Linux framebuffer.
 - 2026-06-06 live fix: rooted provider endpoints such as `/eve/deck/bifrost`
   must be resolved against the configured Odin deck authority before opening a
@@ -151,6 +163,10 @@ Source: `https://en.wikipedia.org/wiki/Linux_framebuffer`
 - Provider fetch diagnostics now publish `providerFetchUri` and
   `providerFetchError` in `/var/log/gjallar.status` so transport failures are
   visible at the layer that produces the framebuffer symptom.
+- 2026-06-06 marquee/gutter cut: Gjallar no longer curates provider-boundary
+  ticker segments. Odin publishes the canonical tape; Gjallar consumes it from
+  the provider catalog and enforces one glyph row for top padding, one per
+  inter-panel gutter band, and one for bottom padding.
 - Transport debt remains explicit: the live Nightwing body still consumes the
   compatibility Eve deck bridge. The target input organ is native CultNet /
   CultMesh typed state over the real GameCult transport, not a web-shaped
