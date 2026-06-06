@@ -73,6 +73,8 @@ internal sealed class GjallarRenderer : IDisposable
     private int latestComposedProviders;
     private string lastReceiveStatus = "starting";
     private string lastReceiveError = "";
+    private string lastProviderFetchError = "";
+    private string lastProviderFetchUri = "";
     private SceneCache? sceneCache;
     private FrameTimings lastTimings;
 
@@ -232,7 +234,9 @@ internal sealed class GjallarRenderer : IDisposable
         try
         {
             using var socket = new ClientWebSocket();
-            await socket.ConnectAsync(ProviderDeckUri(provider), token).ConfigureAwait(false);
+            var uri = ProviderDeckUri(provider);
+            lastProviderFetchUri = uri.ToString();
+            await socket.ConnectAsync(uri, token).ConfigureAwait(false);
             var bytes = await ReadTextFrameAsync(socket, token).ConfigureAwait(false);
             using var state = JsonDocument.Parse(bytes);
             if (!state.RootElement.TryGetProperty("surface", out var surface) ||
@@ -241,10 +245,12 @@ internal sealed class GjallarRenderer : IDisposable
                 return null;
             }
 
+            lastProviderFetchError = "";
             return new ProviderFrame(provider, state.RootElement.Clone(), root.Clone());
         }
-        catch when (!token.IsCancellationRequested)
+        catch (Exception error) when (!token.IsCancellationRequested)
         {
+            lastProviderFetchError = $"{provider.Id}: {error.GetType().Name}: {error.Message}";
             return ProviderFrame.Unavailable(provider);
         }
     }
@@ -259,7 +265,7 @@ internal sealed class GjallarRenderer : IDisposable
             endpoint = $"/eve/deck/{Uri.EscapeDataString(provider.Id)}";
         }
 
-        if (Uri.TryCreate(endpoint, UriKind.Absolute, out var absolute))
+        if (!endpoint.StartsWith("/", StringComparison.Ordinal) && Uri.TryCreate(endpoint, UriKind.Absolute, out var absolute))
         {
             return absolute.Scheme is "http" or "https"
                 ? new Uri(endpoint.Replace("http://", "ws://", StringComparison.OrdinalIgnoreCase).Replace("https://", "wss://", StringComparison.OrdinalIgnoreCase))
@@ -267,12 +273,8 @@ internal sealed class GjallarRenderer : IDisposable
         }
 
         var baseUri = new Uri(config.Url);
-        var builder = new UriBuilder(baseUri)
-        {
-            Path = endpoint.StartsWith("/", StringComparison.Ordinal) ? endpoint : $"/{endpoint}",
-            Query = "",
-        };
-        return builder.Uri;
+        var normalizedEndpoint = endpoint.StartsWith("/", StringComparison.Ordinal) ? endpoint : $"/{endpoint}";
+        return new Uri($"{baseUri.Scheme}://{baseUri.Authority}{normalizedEndpoint}");
     }
 
     private static async Task<byte[]> ReadTextFrameAsync(ClientWebSocket socket, CancellationToken token)
@@ -536,6 +538,8 @@ internal sealed class GjallarRenderer : IDisposable
             {
                 status = lastReceiveStatus,
                 error = lastReceiveError,
+                providerFetchError = lastProviderFetchError,
+                providerFetchUri = lastProviderFetchUri,
                 catalogProviders = latestCatalogProviders,
                 composedProviders = latestComposedProviders,
                 stateBytes = Volatile.Read(ref latestStateJson)?.Length ?? 0,

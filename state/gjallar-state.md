@@ -1,6 +1,6 @@
 # Gjallar State
 
-Last updated: 2026-06-05
+Last updated: 2026-06-06
 
 ## Identity
 
@@ -143,6 +143,18 @@ Source: `https://en.wikipedia.org/wiki/Linux_framebuffer`
   and text pressure.
 - `FrameDocument` draws text, panels, gutters, marquee, and fills.
 - `FramebufferDevice` maps or writes the Linux framebuffer.
+- 2026-06-06 live fix: rooted provider endpoints such as `/eve/deck/bifrost`
+  must be resolved against the configured Odin deck authority before opening a
+  provider stream. In .NET, `Uri.TryCreate(..., UriKind.Absolute, ...)` can
+  interpret rooted paths as `file://` URIs, which made Gjallar render the
+  unavailable pane while the provider surface was actually reachable.
+- Provider fetch diagnostics now publish `providerFetchUri` and
+  `providerFetchError` in `/var/log/gjallar.status` so transport failures are
+  visible at the layer that produces the framebuffer symptom.
+- Transport debt remains explicit: the live Nightwing body still consumes the
+  compatibility Eve deck bridge. The target input organ is native CultNet /
+  CultMesh typed state over the real GameCult transport, not a web-shaped
+  provider fetch loop.
 
 This is enough to run, but not enough to be proud forever. The next architectural
 cut is to extract explicit model types:
