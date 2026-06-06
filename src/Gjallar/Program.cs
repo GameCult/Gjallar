@@ -548,6 +548,8 @@ internal sealed class GjallarRenderer : IDisposable
             {
                 panels = sceneCache?.Panels.Count ?? 0,
                 gutterCells = sceneCache?.GutterCells.Count ?? 0,
+                marqueeChars = sceneCache?.MarqueeTape.Length ?? 0,
+                marqueeSample = Sample(sceneCache?.MarqueeTape ?? "", 160),
             },
             cultMathNative = Voronoi.NativeAvailable,
             paintMs = Math.Round(paintMs, 2),
@@ -564,6 +566,9 @@ internal sealed class GjallarRenderer : IDisposable
     }
 
     private static ColorBgra ToBgra(Color32 color) => new(color.r, color.g, color.b);
+
+    private static string Sample(string value, int maxLength) =>
+        value.Length <= maxLength ? value : value[..maxLength];
 
     private SceneCache SceneFor(byte[] stateJson)
     {
@@ -828,12 +833,23 @@ internal sealed class FrameDocument
     {
         var font = fonts.Edge;
         var tones = new ToneBatch(Height, frameIndex);
-        var glyphs = BuildMazePoetry(font, cells, frameIndex, tones, marqueeTape);
+        var tape = MarketPoetryTape(marqueeTape);
+        var glyphs = BuildMazePoetry(font, cells, frameIndex, tones, tape);
+        var columns = Math.Max(1, (Width - 16) / Math.Max(1, font.Width));
+        var top = TickerWindow(tape, frameIndex / 4, columns);
+        var bottom = TickerWindow(tape, -(frameIndex / 5), columns);
+        var topColorIndex = tones.Add(8, 4, CultMathTone.Edge, font.Width);
+        var bottomColorIndex = tones.Add(8, Math.Max(0, Height - font.Height - 4), CultMathTone.Edge, font.Width);
         var colors = tones.Resolve();
         foreach (var glyph in glyphs)
         {
             DrawGlyph(font, glyph.X, glyph.Y, glyph.Character, colors[glyph.ColorIndex]);
         }
+
+        var topColor = colors[topColorIndex];
+        var bottomColor = colors[bottomColorIndex];
+        DrawText(font, 8, 4, top, topColor, Width - 16);
+        DrawText(font, 8, Math.Max(0, Height - font.Height - 4), bottom, bottomColor, Width - 16);
     }
 
     public void DrawText(int fontIndex, int x, int y, string text, ColorBgra color) => DrawText(fonts[fontIndex], x, y, text, color, Width - x);
@@ -940,10 +956,9 @@ internal sealed class FrameDocument
         }
     }
 
-    private IReadOnlyList<GlyphCommand> BuildMazePoetry(PsfFont font, IReadOnlyList<GutterCell> cells, int frameIndex, ToneBatch tones, string marqueeTape)
+    private IReadOnlyList<GlyphCommand> BuildMazePoetry(PsfFont font, IReadOnlyList<GutterCell> cells, int frameIndex, ToneBatch tones, string tape)
     {
         const int framesPerScrollCell = 8;
-        var tape = MarketPoetryTape(marqueeTape);
         var scroll = (frameIndex / framesPerScrollCell) % Math.Max(1, tape.Length);
         var glyphs = new List<GlyphCommand>();
         foreach (var cell in cells)
@@ -961,6 +976,22 @@ internal sealed class FrameDocument
         }
 
         return glyphs;
+    }
+
+    private static string TickerWindow(string tape, int offset, int columns)
+    {
+        if (string.IsNullOrEmpty(tape) || columns <= 0)
+        {
+            return "";
+        }
+
+        var builder = new StringBuilder(columns);
+        for (var index = 0; index < columns; index++)
+        {
+            var tapeIndex = ((offset + index) % tape.Length + tape.Length) % tape.Length;
+            builder.Append(tape[tapeIndex]);
+        }
+        return builder.ToString();
     }
 
     private static string MarketPoetryTape(string marqueeTape)
