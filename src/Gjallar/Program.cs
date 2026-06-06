@@ -503,7 +503,7 @@ internal sealed class GjallarRenderer : IDisposable
                 gutterCells = sceneCache?.GutterCells.Count ?? 0,
                 gutterRows = sceneCache?.GutterCells.Select(static cell => cell.Row).Distinct().Count() ?? 0,
                 gutterPolicy = "single-row-top-between-panels-bottom",
-                gutterFlow = "alternating-serpentine-blocks",
+                gutterFlow = "alternating-scroll-readable-blocks",
                 marqueeChars = sceneCache?.MarqueeTape.Length ?? 0,
                 marqueeSample = Sample(sceneCache?.MarqueeTape ?? "", 160),
             },
@@ -908,29 +908,35 @@ internal sealed class FrameDocument
 
         const int framesPerScrollCell = 8;
         var scroll = (frameIndex / framesPerScrollCell) % Math.Max(1, tape.Length);
-        var orderedCells = cells
+        var blocks = cells
             .GroupBy(static cell => cell.Row)
             .OrderBy(static group => group.Key)
-            .SelectMany(static group =>
-            {
-                var rowCells = group.OrderBy(static cell => cell.LaneColumn);
-                return group.First().Forward
-                    ? rowCells
-                    : rowCells.Reverse();
-            })
+            .Select(static group => group.OrderBy(static cell => cell.LaneColumn).ToArray())
             .ToArray();
         var glyphs = new List<GlyphCommand>();
-        for (var index = 0; index < orderedCells.Length; index++)
+        var blockStart = 0;
+        foreach (var block in blocks)
         {
-            var cell = orderedCells[index];
-            var tapeIndex = index - scroll;
-            var character = tape[((tapeIndex % tape.Length) + tape.Length) % tape.Length];
-            if (character == ' ')
+            if (block.Length == 0)
             {
                 continue;
             }
 
-            glyphs.Add(new GlyphCommand(cell.X, cell.Y, character, tones.Add(cell.X, cell.Y, CultMathTone.Edge, font.Width)));
+            var direction = block[0].Forward ? 1 : -1;
+            for (var index = 0; index < block.Length; index++)
+            {
+                var cell = block[index];
+                var tapeIndex = blockStart + index + direction * scroll;
+                var character = tape[((tapeIndex % tape.Length) + tape.Length) % tape.Length];
+                if (character == ' ')
+                {
+                    continue;
+                }
+
+                glyphs.Add(new GlyphCommand(cell.X, cell.Y, character, tones.Add(cell.X, cell.Y, CultMathTone.Edge, font.Width)));
+            }
+
+            blockStart += block.Length;
         }
 
         return glyphs;
