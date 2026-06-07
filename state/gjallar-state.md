@@ -29,6 +29,8 @@ surface sources
 - Current feed: Odin provider catalog at `ws://192.168.1.66:8797/eve/deck`
 - Current status path on Nightwing: `/var/log/gjallar.status`
 - Current cursor input: `/dev/input/mice`, rendered as a framebuffer crosshair.
+- Current minimized-panel presentation: a top tab row. Clicking a panel title
+  minimizes it; clicking its tab restores it.
 - Current marquee input: Odin's provider catalog `marqueeText`, built from the
   Stonks securities tape interwoven with ordered VoidBot poem lines.
 
@@ -45,6 +47,7 @@ Observed live status after cursor/minimize cut:
   "scene": {
     "panels": 6,
     "minimizedPanels": 0,
+    "minimizedPlacement": "top-tabs",
     "titleHitRegions": 38,
     "gutterRows": 3,
     "gutterPolicy": "single-row-top-between-panels-bottom",
@@ -71,12 +74,12 @@ Observed live status after cursor/minimize cut:
   font assets, runtime flags, mouse deltas/buttons, Odin's canonical marquee
   tape, and later native CultMesh subscriptions.
 - Outputs: `gjallar.overview` composition state, framebuffer frames, sparse
-  refresh streams, cursor presentation, minimized panel presentation, and
+  refresh streams, cursor presentation, top-tab minimized panel presentation, and
   agent-readable panel captures.
 - Derived state: pane weights, pixel rectangles, selected fonts, one-row gutter
   blocks, a continuous readable marquee ribbon path, dirty rectangles, glyph
-  runs, title-bar hit regions, local minimized-panel keys, and compact text
-  projections.
+  runs, title-bar hit regions, top-tab restore affordances, local
+  minimized-panel keys, and compact text projections.
 - Forbidden writers: discovery systems must not decide Gjallar layout; providers
   must not tune themselves for Nightwing; framebuffer backends must not invent
   provider truth; Gjallar must not synthesize status-noise marquee content from
@@ -171,6 +174,9 @@ Source: `https://en.wikipedia.org/wiki/Linux_framebuffer`
   lowers the incoming marquee as a continuous ribbon of readable text chunks.
   Adjacent gutter blocks alternate direction by changing chunk placement along
   the path; letters inside each chunk keep normal left-to-right order.
+- Minimized top-level provider panels reserve a tab strip at the top of the
+  active scene. The tabs are normal title-hit regions, so minimize and restore
+  use the same local operator state instead of a separate recovery path.
 - `visibleMarqueeRows` in `/var/log/gjallar.status` samples the actual gutter
   rows produced by the render math. Use it when the framebuffer symptom differs
   from the received `marqueeSample`.

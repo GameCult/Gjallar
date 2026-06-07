@@ -670,6 +670,7 @@ internal sealed class GjallarRenderer : IDisposable
                 panels = sceneCache?.Panels.Count ?? 0,
                 minimizedPanels = minimizedCount,
                 minimizedTitles,
+                minimizedPlacement = "top-tabs",
                 titleHitRegions = titleHitRegionCount,
                 gutterCells = sceneCache?.GutterCells.Count ?? 0,
                 gutterRows = sceneCache?.GutterCells.Select(static cell => cell.Row).Distinct().Count() ?? 0,
@@ -727,19 +728,18 @@ internal sealed class GjallarRenderer : IDisposable
         var outerY = gutter;
         var minimizedProviders = providers.Where(node => minimizedSnapshot.Contains(node.StableKey())).ToArray();
         var activeProviders = providers.Where(node => !minimizedSnapshot.Contains(node.StableKey())).ToArray();
-        var shelfHeight = minimizedProviders.Length == 0 ? 0 : Math.Max(fonts.Edge.LineHeight + 10, GutterSize(fonts.Edge));
-        var activeRect = new RectI(0, outerY, framebuffer.Width, Math.Max(1, framebuffer.Height - outerY * 2 - shelfHeight));
-        var packed = AabbPacker.Pack(activeProviders, activeRect, gutter).ToList();
-        if (minimizedProviders.Length > 0)
-        {
-            packed.AddRange(MinimizedShelf(minimizedProviders, new RectI(0, framebuffer.Height - outerY - shelfHeight, framebuffer.Width, shelfHeight), gutter));
-        }
+        var tabHeight = minimizedProviders.Length == 0 ? 0 : Math.Max(fonts.Edge.LineHeight + 10, GutterSize(fonts.Edge));
+        var activeRect = new RectI(0, outerY + tabHeight, framebuffer.Width, Math.Max(1, framebuffer.Height - outerY * 2 - tabHeight));
+        var packed = minimizedProviders.Length == 0
+            ? []
+            : MinimizedTabs(minimizedProviders, new RectI(0, outerY, framebuffer.Width, tabHeight), gutter).ToList();
+        packed.AddRange(AabbPacker.Pack(activeProviders, activeRect, gutter));
         var packedArray = packed.ToArray();
         sceneCache = new SceneCache(stateJson, packedArray, FrameDocument.BuildGutterCells(framebuffer.Width, framebuffer.Height, fonts.Edge, packedArray, gutter), root.MarqueeText, minimizedSnapshotVersion);
         return sceneCache;
     }
 
-    private static IEnumerable<PackedPanel> MinimizedShelf(IReadOnlyList<EveNode> nodes, RectI rect, int gap)
+    private static IEnumerable<PackedPanel> MinimizedTabs(IReadOnlyList<EveNode> nodes, RectI rect, int gap)
     {
         var count = Math.Max(1, nodes.Count);
         var width = Math.Max(80, rect.Width / count);

@@ -16,11 +16,12 @@ regions may use different text resolutions.
   font assets, runtime flags, mouse input, Odin's canonical marquee tape, and
   eventually direct CultMesh subscriptions.
 - Outputs: `gjallar.overview` composition state, visible framebuffer frames,
-  cursor presentation, minimized panel presentation, and renderer telemetry.
+  cursor presentation, top-tab minimized panel presentation, and renderer
+  telemetry.
 - Derived state: pane weights, pixel rectangles, chosen font sizes, one-row
   gutter blocks, continuous readable marquee ribbon positions, dirty rectangles,
-  glyph runs, title-bar hit regions, local minimized-panel keys, and compact
-  agent-readable projections.
+  glyph runs, title-bar hit regions, top-tab restore affordances, local
+  minimized-panel keys, and compact agent-readable projections.
 - Forbidden writers: discovery systems do not decide Gjallar layout; providers
   do not tune themselves for Nightwing; framebuffer backends do not invent
   provider truth; Gjallar does not derive marquee content from provider status
@@ -42,6 +43,7 @@ Odin provider catalog
   -> EveNode panel extraction
   -> weighted AABB packing
   -> local minimized-state application
+  -> minimized top-tab strip reservation
   -> title-bar hit-region emission
   -> one-row gutter cell plan
   -> continuous readable marquee ribbon path
