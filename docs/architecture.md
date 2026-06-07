@@ -10,19 +10,21 @@ regions may use different text resolutions.
 
 - Owner: Gjallar owns display composition, pane partitioning, per-pane virtual
   text grids, font-scale selection, framebuffer lowering, and future sparse
-  refresh output.
+  refresh output. Gjallar also owns local cursor state, title-bar hit testing,
+  and minimized/restored panel state.
 - Inputs: provider catalogs, provider-owned surface trees, display dimensions,
-  font assets, runtime flags, Odin's canonical marquee tape, and eventually
-  direct CultMesh subscriptions.
+  font assets, runtime flags, mouse input, Odin's canonical marquee tape, and
+  eventually direct CultMesh subscriptions.
 - Outputs: `gjallar.overview` composition state, visible framebuffer frames,
-  and renderer telemetry.
+  cursor presentation, minimized panel presentation, and renderer telemetry.
 - Derived state: pane weights, pixel rectangles, chosen font sizes, one-row
   gutter blocks, continuous readable marquee ribbon positions, dirty rectangles,
-  glyph runs, and compact agent-readable projections.
+  glyph runs, title-bar hit regions, local minimized-panel keys, and compact
+  agent-readable projections.
 - Forbidden writers: discovery systems do not decide Gjallar layout; providers
   do not tune themselves for Nightwing; framebuffer backends do not invent
   provider truth; Gjallar does not derive marquee content from provider status
-  summaries.
+  summaries; Odin and providers do not own Nightwing-local minimized state.
 - Shared paths: full-frame rendering, sparse refresh, future browser previews,
   and agent text capture should lower the same overview model.
 - Deletion line: any code that both discovers provider truth and decides final
@@ -39,6 +41,8 @@ Odin provider catalog
   -> synthetic gjallar.overview surface
   -> EveNode panel extraction
   -> weighted AABB packing
+  -> local minimized-state application
+  -> title-bar hit-region emission
   -> one-row gutter cell plan
   -> continuous readable marquee ribbon path
   -> per-panel text pressure estimate

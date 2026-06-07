@@ -28,10 +28,11 @@ surface sources
 - Current deployment: Nightwing `gjallar.service`
 - Current feed: Odin provider catalog at `ws://192.168.1.66:8797/eve/deck`
 - Current status path on Nightwing: `/var/log/gjallar.status`
+- Current cursor input: `/dev/input/mice`, rendered as a framebuffer crosshair.
 - Current marquee input: Odin's provider catalog `marqueeText`, built from the
   Stonks securities tape interwoven with ordered VoidBot poem lines.
 
-Observed live status after marquee/gutter cut:
+Observed live status after cursor/minimize cut:
 
 ```json
 {
@@ -43,11 +44,19 @@ Observed live status after marquee/gutter cut:
   },
   "scene": {
     "panels": 6,
+    "minimizedPanels": 0,
+    "titleHitRegions": 38,
     "gutterRows": 3,
     "gutterPolicy": "single-row-top-between-panels-bottom",
     "gutterFlow": "continuous-readable-ribbon",
     "marqueeChars": 3101,
     "visibleMarqueeRows": ["..."]
+  },
+  "cursor": {
+    "status": "connected:/dev/input/mice",
+    "active": false,
+    "x": 960,
+    "y": 540
   }
 }
 ```
@@ -56,22 +65,27 @@ Observed live status after marquee/gutter cut:
 
 - Owner: Gjallar owns display composition, pane partitioning, per-pane virtual
   grids, font-scale choice, gutter text continuity, frame/cell lowering, and
-  renderer telemetry.
+  renderer telemetry. It also owns local cursor position, title-bar hit testing,
+  and minimized/restored panel state.
 - Inputs: provider catalogs, provider-owned surface trees, display dimensions,
-  font assets, runtime flags, Odin's canonical marquee tape, and later native
-  CultMesh subscriptions.
+  font assets, runtime flags, mouse deltas/buttons, Odin's canonical marquee
+  tape, and later native CultMesh subscriptions.
 - Outputs: `gjallar.overview` composition state, framebuffer frames, sparse
-  refresh streams, and agent-readable panel captures.
+  refresh streams, cursor presentation, minimized panel presentation, and
+  agent-readable panel captures.
 - Derived state: pane weights, pixel rectangles, selected fonts, one-row gutter
   blocks, a continuous readable marquee ribbon path, dirty rectangles, glyph
-  runs, and compact text projections.
+  runs, title-bar hit regions, local minimized-panel keys, and compact text
+  projections.
 - Forbidden writers: discovery systems must not decide Gjallar layout; providers
   must not tune themselves for Nightwing; framebuffer backends must not invent
   provider truth; Gjallar must not synthesize status-noise marquee content from
-  provider summaries.
+  provider summaries. Odin and providers must not own Nightwing-local minimized
+  state.
 - Cut line: code that discovers what exists belongs upstream. Code that decides
   what the canonical marquee says belongs upstream. Code that decides how a
-  physical or virtual display shows it belongs in Gjallar.
+  physical or virtual display shows it, and what the local operator has
+  minimized, belongs in Gjallar.
 
 ## Product Thesis
 

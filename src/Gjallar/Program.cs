@@ -23,7 +23,8 @@ internal sealed record GjallarConfig(
     int Frames,
     int Width,
     int Height,
-    string FontPath)
+    string FontPath,
+    string MousePath)
 {
     public static GjallarConfig Parse(IReadOnlyList<string> args) => new(
         StringArg(args, "--fb", "/dev/fb0"),
@@ -36,7 +37,8 @@ internal sealed record GjallarConfig(
         IntArg(args, "--frames", 0),
         IntArg(args, "--width", 0),
         IntArg(args, "--height", 0),
-        StringArg(args, "--font", ""));
+        StringArg(args, "--font", ""),
+        StringArg(args, "--mouse", "/dev/input/mice"));
 
     private static string StringArg(IReadOnlyList<string> args, string name, string fallback)
     {
@@ -77,6 +79,16 @@ internal sealed class GjallarRenderer : IDisposable
     private string lastProviderFetchUri = "";
     private SceneCache? sceneCache;
     private FrameTimings lastTimings;
+    private readonly object interactionLock = new();
+    private readonly HashSet<string> minimizedPanels = new(StringComparer.Ordinal);
+    private IReadOnlyList<TitleHitRegion> latestTitleHits = [];
+    private int minimizedVersion;
+    private int cursorX;
+    private int cursorY;
+    private bool cursorActive;
+    private string cursorStatus = "not-started";
+    private string cursorError = "";
+    private string lastClick = "";
 
     public GjallarRenderer(GjallarConfig config)
     {
@@ -86,11 +98,14 @@ internal sealed class GjallarRenderer : IDisposable
         frameInterval = TimeSpan.FromSeconds(1.0 / Math.Max(1, config.RefreshHz));
         timer = new PeriodicTimer(frameInterval);
         lastStatusTick = Stopwatch.GetTimestamp();
+        cursorX = framebuffer.Width / 2;
+        cursorY = framebuffer.Height / 2;
     }
 
     public async Task RunAsync()
     {
         var receiveTask = Task.Run(() => ConnectReceiveLoopAsync(stopping.Token));
+        var inputTask = Task.Run(() => MouseInputLoopAsync(stopping.Token));
         var rendered = 0;
         while (config.Frames <= 0 || rendered < config.Frames)
         {
@@ -120,6 +135,108 @@ internal sealed class GjallarRenderer : IDisposable
         }
         catch (OperationCanceledException) when (stopping.IsCancellationRequested)
         {
+        }
+        try
+        {
+            await inputTask.ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (stopping.IsCancellationRequested)
+        {
+        }
+    }
+
+    private async Task MouseInputLoopAsync(CancellationToken token)
+    {
+        if (string.IsNullOrWhiteSpace(config.MousePath))
+        {
+            cursorStatus = "disabled";
+            return;
+        }
+
+        while (!token.IsCancellationRequested)
+        {
+            try
+            {
+                await using var stream = File.Open(config.MousePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                cursorStatus = $"connected:{config.MousePath}";
+                cursorError = "";
+                var packet = new byte[3];
+                var leftDown = false;
+                while (!token.IsCancellationRequested)
+                {
+                    await ReadExactlyAsync(stream, packet, token).ConfigureAwait(false);
+                    var buttons = packet[0];
+                    var dx = unchecked((sbyte)packet[1]);
+                    var dy = unchecked((sbyte)packet[2]);
+                    var clicked = (buttons & 0x01) != 0 && !leftDown;
+                    leftDown = (buttons & 0x01) != 0;
+                    lock (interactionLock)
+                    {
+                        cursorActive = true;
+                        cursorX = Math.Clamp(cursorX + dx, 0, Math.Max(0, framebuffer.Width - 1));
+                        cursorY = Math.Clamp(cursorY - dy, 0, Math.Max(0, framebuffer.Height - 1));
+                    }
+
+                    if (clicked)
+                    {
+                        TogglePanelAtCursor();
+                    }
+                }
+            }
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception error) when (!token.IsCancellationRequested)
+            {
+                cursorStatus = "input-error";
+                cursorError = error.Message;
+                await Task.Delay(TimeSpan.FromSeconds(2), token).ConfigureAwait(false);
+            }
+        }
+    }
+
+    private static async Task ReadExactlyAsync(Stream stream, byte[] buffer, CancellationToken token)
+    {
+        var offset = 0;
+        while (offset < buffer.Length)
+        {
+            var read = await stream.ReadAsync(buffer.AsMemory(offset, buffer.Length - offset), token).ConfigureAwait(false);
+            if (read == 0)
+            {
+                throw new EndOfStreamException("mouse input ended");
+            }
+            offset += read;
+        }
+    }
+
+    private void TogglePanelAtCursor()
+    {
+        TitleHitRegion? hit = null;
+        int x;
+        int y;
+        lock (interactionLock)
+        {
+            x = cursorX;
+            y = cursorY;
+            hit = latestTitleHits
+                .Where(region => region.Rect.Contains(x, y))
+                .OrderByDescending(region => region.Depth)
+                .ThenBy(region => region.Rect.Width * region.Rect.Height)
+                .FirstOrDefault();
+            if (hit is null)
+            {
+                lastClick = $"miss:{x},{y}";
+                return;
+            }
+
+            if (!minimizedPanels.Add(hit.Key))
+            {
+                minimizedPanels.Remove(hit.Key);
+            }
+            minimizedVersion++;
+            sceneCache = null;
+            lastClick = $"{(minimizedPanels.Contains(hit.Key) ? "minimized" : "restored")}:{hit.Title}@{x},{y}";
         }
     }
 
@@ -413,7 +530,21 @@ internal sealed class GjallarRenderer : IDisposable
     private FrameTimings RenderOnce()
     {
         var stateJson = Volatile.Read(ref latestStateJson);
-        var frame = new FrameDocument(framebuffer.Width, framebuffer.Height, fonts);
+        HashSet<string> minimizedSnapshot;
+        int minimizedSnapshotVersion;
+        int drawCursorX;
+        int drawCursorY;
+        bool drawCursor;
+        lock (interactionLock)
+        {
+            minimizedSnapshot = new HashSet<string>(minimizedPanels, StringComparer.Ordinal);
+            minimizedSnapshotVersion = minimizedVersion;
+            drawCursorX = cursorX;
+            drawCursorY = cursorY;
+            drawCursor = cursorActive;
+        }
+
+        var frame = new FrameDocument(framebuffer.Width, framebuffer.Height, fonts, minimizedSnapshot);
         var copyMs = 0.0;
         var decorMs = 0.0;
         var gutterMs = 0.0;
@@ -426,7 +557,7 @@ internal sealed class GjallarRenderer : IDisposable
         }
         else
         {
-            var scene = SceneFor(stateJson);
+            var scene = SceneFor(stateJson, minimizedSnapshot, minimizedSnapshotVersion);
             var step = Stopwatch.GetTimestamp();
             frame.Clear(ColorBgra.Black);
             foreach (var panel in scene.Panels)
@@ -441,6 +572,16 @@ internal sealed class GjallarRenderer : IDisposable
             step = Stopwatch.GetTimestamp();
             frame.DrawGutterMaze(scene.GutterCells, frameIndex, scene.MarqueeTape);
             gutterMs = ElapsedMilliseconds(step, Stopwatch.GetTimestamp());
+        }
+
+        if (drawCursor)
+        {
+            frame.DrawCursor(drawCursorX, drawCursorY, frameIndex);
+        }
+
+        lock (interactionLock)
+        {
+            latestTitleHits = frame.TitleHitRegions.ToArray();
         }
 
         var presentStarted = Stopwatch.GetTimestamp();
@@ -475,6 +616,28 @@ internal sealed class GjallarRenderer : IDisposable
             return;
         }
 
+        string[] minimizedTitles;
+        int minimizedCount;
+        int titleHitRegionCount;
+        int statusCursorX;
+        int statusCursorY;
+        bool statusCursorActive;
+        string statusCursorStatus;
+        string statusCursorError;
+        string statusLastClick;
+        lock (interactionLock)
+        {
+            minimizedTitles = minimizedPanels.Take(16).ToArray();
+            minimizedCount = minimizedPanels.Count;
+            titleHitRegionCount = latestTitleHits.Count;
+            statusCursorX = cursorX;
+            statusCursorY = cursorY;
+            statusCursorActive = cursorActive;
+            statusCursorStatus = cursorStatus;
+            statusCursorError = cursorError;
+            statusLastClick = lastClick;
+        }
+
         Directory.CreateDirectory(Path.GetDirectoryName(config.StatusPath) ?? ".");
         var visibleMarqueeRows = sceneCache is null
             ? []
@@ -505,6 +668,9 @@ internal sealed class GjallarRenderer : IDisposable
             scene = new
             {
                 panels = sceneCache?.Panels.Count ?? 0,
+                minimizedPanels = minimizedCount,
+                minimizedTitles,
+                titleHitRegions = titleHitRegionCount,
                 gutterCells = sceneCache?.GutterCells.Count ?? 0,
                 gutterRows = sceneCache?.GutterCells.Select(static cell => cell.Row).Distinct().Count() ?? 0,
                 gutterPolicy = "single-row-top-between-panels-bottom",
@@ -513,6 +679,15 @@ internal sealed class GjallarRenderer : IDisposable
                 marqueeSample = Sample(sceneCache?.MarqueeTape ?? "", 160),
                 visibleMarqueeRows,
                 visibleMarqueeHasStonks = visibleMarqueeRows.Any(static row => row.Contains('$') || row.Contains("BITCOIN", StringComparison.OrdinalIgnoreCase) || row.Contains("DOGECOIN", StringComparison.OrdinalIgnoreCase) || row.Contains("ETHEREUM", StringComparison.OrdinalIgnoreCase)),
+            },
+            cursor = new
+            {
+                status = statusCursorStatus,
+                error = statusCursorError,
+                active = statusCursorActive,
+                x = statusCursorX,
+                y = statusCursorY,
+                lastClick = statusLastClick,
             },
             cultMathNative = Voronoi.NativeAvailable,
             paintMs = Math.Round(paintMs, 2),
@@ -533,9 +708,9 @@ internal sealed class GjallarRenderer : IDisposable
     private static string Sample(string value, int maxLength) =>
         value.Length <= maxLength ? value : value[..maxLength];
 
-    private SceneCache SceneFor(byte[] stateJson)
+    private SceneCache SceneFor(byte[] stateJson, IReadOnlySet<string> minimizedSnapshot, int minimizedSnapshotVersion)
     {
-        if (sceneCache is { } existing && ReferenceEquals(existing.StateJson, stateJson))
+        if (sceneCache is { } existing && ReferenceEquals(existing.StateJson, stateJson) && existing.MinimizedVersion == minimizedSnapshotVersion)
         {
             return existing;
         }
@@ -543,16 +718,37 @@ internal sealed class GjallarRenderer : IDisposable
         using var state = JsonDocument.Parse(stateJson);
         if (!EveNode.TryRoot(state.RootElement, out var root))
         {
-            sceneCache = new SceneCache(stateJson, [], [], "");
+            sceneCache = new SceneCache(stateJson, [], [], "", minimizedSnapshotVersion);
             return sceneCache;
         }
 
         var providers = root.PanelChildren().Where(node => !node.IsScaffoldOnly()).ToArray();
         var gutter = GutterSize(fonts.Edge);
         var outerY = gutter;
-        var packed = AabbPacker.Pack(providers, new RectI(0, outerY, framebuffer.Width, framebuffer.Height - outerY * 2), gutter).ToArray();
-        sceneCache = new SceneCache(stateJson, packed, FrameDocument.BuildGutterCells(framebuffer.Width, framebuffer.Height, fonts.Edge, packed, gutter), root.MarqueeText);
+        var minimizedProviders = providers.Where(node => minimizedSnapshot.Contains(node.StableKey())).ToArray();
+        var activeProviders = providers.Where(node => !minimizedSnapshot.Contains(node.StableKey())).ToArray();
+        var shelfHeight = minimizedProviders.Length == 0 ? 0 : Math.Max(fonts.Edge.LineHeight + 10, GutterSize(fonts.Edge));
+        var activeRect = new RectI(0, outerY, framebuffer.Width, Math.Max(1, framebuffer.Height - outerY * 2 - shelfHeight));
+        var packed = AabbPacker.Pack(activeProviders, activeRect, gutter).ToList();
+        if (minimizedProviders.Length > 0)
+        {
+            packed.AddRange(MinimizedShelf(minimizedProviders, new RectI(0, framebuffer.Height - outerY - shelfHeight, framebuffer.Width, shelfHeight), gutter));
+        }
+        var packedArray = packed.ToArray();
+        sceneCache = new SceneCache(stateJson, packedArray, FrameDocument.BuildGutterCells(framebuffer.Width, framebuffer.Height, fonts.Edge, packedArray, gutter), root.MarqueeText, minimizedSnapshotVersion);
         return sceneCache;
+    }
+
+    private static IEnumerable<PackedPanel> MinimizedShelf(IReadOnlyList<EveNode> nodes, RectI rect, int gap)
+    {
+        var count = Math.Max(1, nodes.Count);
+        var width = Math.Max(80, rect.Width / count);
+        for (var index = 0; index < nodes.Count; index++)
+        {
+            var x = rect.X + index * width;
+            var itemWidth = index == nodes.Count - 1 ? Math.Max(1, rect.X + rect.Width - x) : width;
+            yield return new PackedPanel(nodes[index], AabbPacker.Inset(new RectI(x, rect.Y, itemWidth, rect.Height), Math.Max(2, gap / 2)), AabbPacker.Weight(nodes[index]), nodes[index].StableKey(), true);
+        }
     }
 
     private static int GutterSize(PsfFont font) =>
@@ -567,7 +763,7 @@ internal sealed class GjallarRenderer : IDisposable
     }
 }
 
-internal sealed record SceneCache(byte[] StateJson, IReadOnlyList<PackedPanel> Panels, IReadOnlyList<GutterCell> GutterCells, string MarqueeTape);
+internal sealed record SceneCache(byte[] StateJson, IReadOnlyList<PackedPanel> Panels, IReadOnlyList<GutterCell> GutterCells, string MarqueeTape, int MinimizedVersion);
 internal readonly record struct FrameTimings(double CopyMs, double DecorMs, double GutterMs, double PresentMs);
 internal sealed record ProviderCatalog(IReadOnlyList<ProviderCatalogEntry> Providers, string? MarqueeText = null);
 internal sealed record ProviderCatalogEntry(
@@ -621,12 +817,16 @@ internal sealed record ProviderFrame(ProviderCatalogEntry Provider, JsonElement 
     }
 }
 
+internal sealed record TitleHitRegion(string Key, string Title, RectI Rect, bool Minimized, int Depth);
+
 internal sealed class FrameDocument
 {
     private readonly FontAtlas fonts;
+    private readonly IReadOnlySet<string> minimizedPanels;
     public byte[] Pixels { get; }
     public int Width { get; }
     public int Height { get; }
+    public List<TitleHitRegion> TitleHitRegions { get; } = [];
     public int PanelCount { get; private set; }
     public int[] X { get; }
     public int[] Y { get; }
@@ -635,11 +835,12 @@ internal sealed class FrameDocument
     public float[] Weight { get; }
     public int[] FontIndex { get; }
 
-    public FrameDocument(int width, int height, FontAtlas fonts, int panelCapacity = 256)
+    public FrameDocument(int width, int height, FontAtlas fonts, IReadOnlySet<string>? minimizedPanels = null, int panelCapacity = 256)
     {
         Width = width;
         Height = height;
         this.fonts = fonts;
+        this.minimizedPanels = minimizedPanels ?? new HashSet<string>();
         Pixels = GC.AllocateUninitializedArray<byte>(width * height * 4);
         X = new int[panelCapacity];
         Y = new int[panelCapacity];
@@ -663,6 +864,11 @@ internal sealed class FrameDocument
     public void CopyFrom(byte[] pixels) => Buffer.BlockCopy(pixels, 0, Pixels, 0, Math.Min(pixels.Length, Pixels.Length));
 
     public void DrawPanel(PackedPanel panel, int frameIndex, int depth = 0)
+    {
+        DrawPanel(panel, frameIndex, string.IsNullOrWhiteSpace(panel.Key) ? panel.Node.StableKey() : panel.Key, depth);
+    }
+
+    private void DrawPanel(PackedPanel panel, int frameIndex, string panelKey, int depth)
     {
         var rect = panel.Rect;
         var headerFont = fonts.HeaderFor(rect.Height);
@@ -696,7 +902,9 @@ internal sealed class FrameDocument
         AddBorderCommands(rect, tones, fills);
 
         var title = panel.Node.Title;
-        texts.Add(new TextCommand(headerFont, rect.X + 8, headerTextY, title, Math.Max(1, rect.Width - 16), tones.Add(rect.X + 8, headerTextY, CultMathTone.Header, headerFont.Width)));
+        TitleHitRegions.Add(new TitleHitRegion(panelKey, title, new RectI(rect.X, rect.Y, rect.Width, headerBand), panel.Minimized, depth));
+        var titleText = $"{(panel.Minimized ? "+ " : "- ")}{title}";
+        texts.Add(new TextCommand(headerFont, rect.X + 8, headerTextY, titleText, Math.Max(1, rect.Width - 16), tones.Add(rect.X + 8, headerTextY, CultMathTone.Header, headerFont.Width)));
 
         var contentX = rect.X + 10;
         var colors = tones.Resolve();
@@ -708,6 +916,11 @@ internal sealed class FrameDocument
         foreach (var text in texts)
         {
             DrawText(text.Font, text.X, text.Y, text.Text, colors[text.ColorIndex], text.MaxWidth);
+        }
+
+        if (panel.Minimized)
+        {
+            return;
         }
 
         if (depth >= 4 || !panel.Node.ShouldRenderNestedPanels() || rect.Width < 96 || contentH < 42)
@@ -734,7 +947,8 @@ internal sealed class FrameDocument
 
         foreach (var child in packedChildren)
         {
-            DrawPanel(child, frameIndex, depth + 1);
+            var childKey = $"{panelKey}/{child.Key}";
+            DrawPanel(child with { Key = childKey, Minimized = minimizedPanels.Contains(childKey) }, frameIndex, childKey, depth + 1);
         }
     }
 
@@ -806,6 +1020,26 @@ internal sealed class FrameDocument
     }
 
     public void DrawText(int fontIndex, int x, int y, string text, ColorBgra color) => DrawText(fonts[fontIndex], x, y, text, color, Width - x);
+
+    public void DrawCursor(int x, int y, int frameIndex)
+    {
+        var color = ToCursorColor(frameIndex);
+        FillRect(new RectI(x - 7, y, 15, 2), ColorBgra.Black);
+        FillRect(new RectI(x, y - 7, 2, 15), ColorBgra.Black);
+        FillRect(new RectI(x - 6, y, 13, 1), color);
+        FillRect(new RectI(x, y - 6, 1, 13), color);
+    }
+
+    private static ColorBgra ToCursorColor(int frameIndex)
+    {
+        var phase = (frameIndex / 12) % 3;
+        return phase switch
+        {
+            0 => new ColorBgra(80, 255, 255),
+            1 => new ColorBgra(255, 255, 120),
+            _ => new ColorBgra(255, 120, 255),
+        };
+    }
 
     private void DrawText(PsfFont font, int x, int y, string text, ColorBgra color, int maxWidth)
     {
@@ -1185,7 +1419,7 @@ internal static class AabbPacker
     public static IReadOnlyList<PackedPanel> Pack(IReadOnlyList<EveNode> nodes, RectI rect, int gap)
     {
         var weighted = nodes
-            .Select(node => new PackedPanel(node, rect, Weight(node)))
+            .Select(node => new PackedPanel(node, rect, Weight(node), node.StableKey(), false))
             .OrderByDescending(item => item.Weight)
             .ToArray();
         var result = new List<PackedPanel>();
@@ -1387,13 +1621,13 @@ internal static class AabbPacker
         return max < preferredMin ? max : Math.Clamp(value, preferredMin, max);
     }
 
-    private static RectI Inset(RectI rect, int gap)
+    public static RectI Inset(RectI rect, int gap)
     {
         var inset = Math.Max(1, gap / 2);
         return new RectI(rect.X, rect.Y + inset, Math.Max(1, rect.Width), Math.Max(1, rect.Height - inset * 2));
     }
 
-    private static float Weight(EveNode node)
+    public static float Weight(EveNode node)
     {
         var items = node.TextItems().Take(160).ToArray();
         var requestedRows = 1.0f;
@@ -1422,7 +1656,7 @@ internal static class AabbPacker
     private sealed record TreemapItem(PackedPanel Panel, float Area);
 }
 
-internal sealed record PackedPanel(EveNode Node, RectI Rect, float Weight);
+internal sealed record PackedPanel(EveNode Node, RectI Rect, float Weight, string Key, bool Minimized);
 internal readonly record struct RectI(int X, int Y, int Width, int Height)
 {
     public float CenterX => X + Width * 0.5f;
@@ -1444,6 +1678,20 @@ internal sealed class EveNode
     public string Text { get; init; } = "";
     public string MarqueeText { get; init; } = "";
     public IReadOnlyList<EveNode> Children { get; init; } = [];
+
+    public string StableKey() =>
+        StablePanelKey(string.IsNullOrWhiteSpace(ProviderId) ? $"{Kind}:{Title}" : $"{ProviderId}:{Kind}:{Title}");
+
+    private static string StablePanelKey(string value)
+    {
+        var builder = new StringBuilder(value.Length);
+        foreach (var ch in value.Trim().ToLowerInvariant())
+        {
+            builder.Append(char.IsLetterOrDigit(ch) ? ch : '-');
+        }
+
+        return string.Join("-", builder.ToString().Split('-', StringSplitOptions.RemoveEmptyEntries));
+    }
 
     public static bool TryRoot(JsonElement element, out EveNode root)
     {
