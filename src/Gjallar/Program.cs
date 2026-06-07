@@ -476,6 +476,11 @@ internal sealed class GjallarRenderer : IDisposable
         }
 
         Directory.CreateDirectory(Path.GetDirectoryName(config.StatusPath) ?? ".");
+        var visibleMarqueeRows = sceneCache is null
+            ? []
+            : FrameDocument.VisibleGutterRows(sceneCache.GutterCells, frames, sceneCache.MarqueeTape)
+                .Select(static row => Sample(row, 160))
+                .ToArray();
         var document = new
         {
             schema = "gamecult.gjallar.frame.v1",
@@ -506,6 +511,8 @@ internal sealed class GjallarRenderer : IDisposable
                 gutterFlow = "alternating-scroll-readable-blocks",
                 marqueeChars = sceneCache?.MarqueeTape.Length ?? 0,
                 marqueeSample = Sample(sceneCache?.MarqueeTape ?? "", 160),
+                visibleMarqueeRows,
+                visibleMarqueeHasStonks = visibleMarqueeRows.Any(static row => row.Contains('$') || row.Contains("BITCOIN", StringComparison.OrdinalIgnoreCase) || row.Contains("DOGECOIN", StringComparison.OrdinalIgnoreCase) || row.Contains("ETHEREUM", StringComparison.OrdinalIgnoreCase)),
             },
             cultMathNative = Voronoi.NativeAvailable,
             paintMs = Math.Round(paintMs, 2),
@@ -906,6 +913,37 @@ internal sealed class FrameDocument
             return [];
         }
 
+        var glyphs = new List<GlyphCommand>();
+        foreach (var glyph in VisibleGutterGlyphs(cells, frameIndex, tape))
+        {
+            if (glyph.Character == ' ')
+            {
+                continue;
+            }
+
+            glyphs.Add(new GlyphCommand(glyph.Cell.X, glyph.Cell.Y, glyph.Character, tones.Add(glyph.Cell.X, glyph.Cell.Y, CultMathTone.Edge, font.Width)));
+        }
+
+        return glyphs;
+    }
+
+    public static IReadOnlyList<string> VisibleGutterRows(IReadOnlyList<GutterCell> cells, int frameIndex, string marqueeTape)
+    {
+        var tape = MarketPoetryTape(marqueeTape);
+        if (string.IsNullOrWhiteSpace(tape))
+        {
+            return [];
+        }
+
+        return VisibleGutterGlyphs(cells, frameIndex, tape)
+            .GroupBy(static glyph => glyph.Cell.Row)
+            .OrderBy(static group => group.Key)
+            .Select(static group => new string(group.OrderBy(static glyph => glyph.Cell.LaneColumn).Select(static glyph => glyph.Character).ToArray()).Trim())
+            .ToArray();
+    }
+
+    private static IReadOnlyList<VisibleGutterGlyph> VisibleGutterGlyphs(IReadOnlyList<GutterCell> cells, int frameIndex, string tape)
+    {
         const int framesPerScrollCell = 8;
         var scroll = (frameIndex / framesPerScrollCell) % Math.Max(1, tape.Length);
         var blocks = cells
@@ -913,7 +951,7 @@ internal sealed class FrameDocument
             .OrderBy(static group => group.Key)
             .Select(static group => group.OrderBy(static cell => cell.LaneColumn).ToArray())
             .ToArray();
-        var glyphs = new List<GlyphCommand>();
+        var glyphs = new List<VisibleGutterGlyph>();
         var blockStart = 0;
         foreach (var block in blocks)
         {
@@ -928,12 +966,7 @@ internal sealed class FrameDocument
                 var cell = block[index];
                 var tapeIndex = blockStart + index + direction * scroll;
                 var character = tape[((tapeIndex % tape.Length) + tape.Length) % tape.Length];
-                if (character == ' ')
-                {
-                    continue;
-                }
-
-                glyphs.Add(new GlyphCommand(cell.X, cell.Y, character, tones.Add(cell.X, cell.Y, CultMathTone.Edge, font.Width)));
+                glyphs.Add(new VisibleGutterGlyph(cell, character));
             }
 
             blockStart += block.Length;
@@ -1684,6 +1717,7 @@ internal sealed record TextItem(string Prefix, string Text)
 internal sealed record FillCommand(RectI Rect, int ColorIndex);
 internal sealed record TextCommand(PsfFont Font, int X, int Y, string Text, int MaxWidth, int ColorIndex);
 internal sealed record GlyphCommand(int X, int Y, char Character, int ColorIndex);
+internal sealed record VisibleGutterGlyph(GutterCell Cell, char Character);
 internal sealed record GutterCell(int X, int Y, int Row, int LaneColumn, bool Forward);
 
 internal sealed class ToneBatch(int resolutionY, int frameIndex)

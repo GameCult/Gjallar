@@ -46,7 +46,8 @@ Observed live status after marquee/gutter cut:
     "gutterRows": 3,
     "gutterPolicy": "single-row-top-between-panels-bottom",
     "gutterFlow": "alternating-scroll-readable-blocks",
-    "marqueeChars": 3101
+    "marqueeChars": 3101,
+    "visibleMarqueeRows": ["..."]
   }
 }
 ```
@@ -156,6 +157,9 @@ Source: `https://en.wikipedia.org/wiki/Linux_framebuffer`
   lowers the incoming marquee as readable text inside each gutter block.
   Adjacent gutter blocks alternate scroll direction, but glyph order remains
   left-to-right inside every block.
+- `visibleMarqueeRows` in `/var/log/gjallar.status` samples the actual gutter
+  rows produced by the render math. Use it when the framebuffer symptom differs
+  from the received `marqueeSample`.
 - `FramebufferDevice` maps or writes the Linux framebuffer.
 - 2026-06-06 live fix: rooted provider endpoints such as `/eve/deck/bifrost`
   must be resolved against the configured Odin deck authority before opening a
