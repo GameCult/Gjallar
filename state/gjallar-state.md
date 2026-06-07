@@ -45,7 +45,7 @@ Observed live status after marquee/gutter cut:
     "panels": 6,
     "gutterRows": 3,
     "gutterPolicy": "single-row-top-between-panels-bottom",
-    "gutterFlow": "alternating-scroll-readable-blocks",
+    "gutterFlow": "continuous-readable-ribbon",
     "marqueeChars": 3101,
     "visibleMarqueeRows": ["..."]
   }
@@ -63,8 +63,8 @@ Observed live status after marquee/gutter cut:
 - Outputs: `gjallar.overview` composition state, framebuffer frames, sparse
   refresh streams, and agent-readable panel captures.
 - Derived state: pane weights, pixel rectangles, selected fonts, one-row gutter
-  blocks, alternating scroll offsets, readable marquee glyph positions, dirty
-  rectangles, glyph runs, and compact text projections.
+  blocks, a continuous readable marquee ribbon path, dirty rectangles, glyph
+  runs, and compact text projections.
 - Forbidden writers: discovery systems must not decide Gjallar layout; providers
   must not tune themselves for Nightwing; framebuffer backends must not invent
   provider truth; Gjallar must not synthesize status-noise marquee content from
@@ -154,9 +154,9 @@ Source: `https://en.wikipedia.org/wiki/Linux_framebuffer`
 - `FontAtlas.ForTextBox` picks a font per panel based on available pixel area
   and text pressure.
 - `FrameDocument` draws text, panels, gutters, marquee glyphs, and fills. It
-  lowers the incoming marquee as readable text inside each gutter block.
-  Adjacent gutter blocks alternate scroll direction, but glyph order remains
-  left-to-right inside every block.
+  lowers the incoming marquee as a continuous ribbon of readable text chunks.
+  Adjacent gutter blocks alternate direction by changing chunk placement along
+  the path; letters inside each chunk keep normal left-to-right order.
 - `visibleMarqueeRows` in `/var/log/gjallar.status` samples the actual gutter
   rows produced by the render math. Use it when the framebuffer symptom differs
   from the received `marqueeSample`.
@@ -173,9 +173,9 @@ Source: `https://en.wikipedia.org/wiki/Linux_framebuffer`
   ticker segments. Odin publishes the canonical tape; Gjallar consumes it from
   the provider catalog and enforces one glyph row for top padding, one per
   inter-panel gutter band, and one for bottom padding.
-- 2026-06-07 gutter flow correction: the marquee is split into gutter blocks
-  again. Blocks alternate scroll direction without reversing glyph order inside
-  right-to-left blocks.
+- 2026-06-07 ribbon correction: the marquee is a single continuous ribbon path
+  through the gutter blocks. A phrase or quote leaving one gutter continues in
+  the next gutter, while chunk text remains readable.
 - Transport debt remains explicit: the live Nightwing body still consumes the
   compatibility Eve deck bridge. The target input organ is native CultNet /
   CultMesh typed state over the real GameCult transport, not a web-shaped

@@ -17,8 +17,8 @@ regions may use different text resolutions.
 - Outputs: `gjallar.overview` composition state, visible framebuffer frames,
   and renderer telemetry.
 - Derived state: pane weights, pixel rectangles, chosen font sizes, one-row
-  gutter blocks, alternating scroll offsets, readable marquee glyph positions,
-  dirty rectangles, glyph runs, and compact agent-readable projections.
+  gutter blocks, continuous readable marquee ribbon positions, dirty rectangles,
+  glyph runs, and compact agent-readable projections.
 - Forbidden writers: discovery systems do not decide Gjallar layout; providers
   do not tune themselves for Nightwing; framebuffer backends do not invent
   provider truth; Gjallar does not derive marquee content from provider status
@@ -40,7 +40,7 @@ Odin provider catalog
   -> EveNode panel extraction
   -> weighted AABB packing
   -> one-row gutter cell plan
-  -> alternating readable marquee block offsets
+  -> continuous readable marquee ribbon path
   -> per-panel text pressure estimate
   -> PSF font selection
   -> frame draw commands

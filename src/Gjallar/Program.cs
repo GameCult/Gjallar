@@ -508,7 +508,7 @@ internal sealed class GjallarRenderer : IDisposable
                 gutterCells = sceneCache?.GutterCells.Count ?? 0,
                 gutterRows = sceneCache?.GutterCells.Select(static cell => cell.Row).Distinct().Count() ?? 0,
                 gutterPolicy = "single-row-top-between-panels-bottom",
-                gutterFlow = "alternating-scroll-readable-blocks",
+                gutterFlow = "continuous-readable-ribbon",
                 marqueeChars = sceneCache?.MarqueeTape.Length ?? 0,
                 marqueeSample = Sample(sceneCache?.MarqueeTape ?? "", 160),
                 visibleMarqueeRows,
@@ -945,28 +945,39 @@ internal sealed class FrameDocument
     private static IReadOnlyList<VisibleGutterGlyph> VisibleGutterGlyphs(IReadOnlyList<GutterCell> cells, int frameIndex, string tape)
     {
         const int framesPerScrollCell = 8;
-        var scroll = (frameIndex / framesPerScrollCell) % Math.Max(1, tape.Length);
-        var blocks = cells
+        var rows = cells
             .GroupBy(static cell => cell.Row)
             .OrderBy(static group => group.Key)
-            .Select(static group => group.OrderBy(static cell => cell.LaneColumn).ToArray())
+            .Select(static group => new GutterRowBlock(group.Key, group.First().Forward, group.OrderBy(static cell => cell.LaneColumn).ToArray()))
             .ToArray();
+        var pathLength = rows.Sum(static row => row.Cells.Length);
+        if (pathLength <= 0)
+        {
+            return [];
+        }
+
+        var maxBlockLength = Math.Clamp(rows.Min(static row => row.Cells.Length) / 5, 18, 42);
+        var blocks = RibbonBlocks(tape, maxBlockLength);
+        var cycleLength = blocks.Sum(static block => block.Length);
+        if (cycleLength <= 0)
+        {
+            return [];
+        }
+
+        var scroll = (frameIndex / framesPerScrollCell) % cycleLength;
         var glyphs = new List<VisibleGutterGlyph>();
         var blockStart = 0;
         foreach (var block in blocks)
         {
-            if (block.Length == 0)
+            var firstStart = PositiveMod(blockStart + scroll, cycleLength);
+            for (var pathStart = firstStart; pathStart < pathLength; pathStart += cycleLength)
             {
-                continue;
+                AddRibbonBlockGlyphs(glyphs, rows, pathLength, block, pathStart);
             }
 
-            var direction = block[0].Forward ? 1 : -1;
-            for (var index = 0; index < block.Length; index++)
+            for (var pathStart = firstStart - cycleLength; pathStart > -block.Length; pathStart -= cycleLength)
             {
-                var cell = block[index];
-                var tapeIndex = blockStart + index + direction * scroll;
-                var character = tape[((tapeIndex % tape.Length) + tape.Length) % tape.Length];
-                glyphs.Add(new VisibleGutterGlyph(cell, character));
+                AddRibbonBlockGlyphs(glyphs, rows, pathLength, block, pathStart);
             }
 
             blockStart += block.Length;
@@ -974,6 +985,96 @@ internal sealed class FrameDocument
 
         return glyphs;
     }
+
+    private static void AddRibbonBlockGlyphs(List<VisibleGutterGlyph> glyphs, IReadOnlyList<GutterRowBlock> rows, int pathLength, string block, int pathStart)
+    {
+        var blockIndex = 0;
+        var path = pathStart;
+        while (blockIndex < block.Length && path < pathLength)
+        {
+            if (path < 0)
+            {
+                var skip = Math.Min(block.Length - blockIndex, -path);
+                blockIndex += skip;
+                path += skip;
+                continue;
+            }
+
+            var rowStart = 0;
+            GutterRowBlock? row = null;
+            foreach (var candidate in rows)
+            {
+                var rowEnd = rowStart + candidate.Cells.Length;
+                if (path < rowEnd)
+                {
+                    row = candidate;
+                    break;
+                }
+                rowStart = rowEnd;
+            }
+
+            if (row is null)
+            {
+                return;
+            }
+
+            var rowOffset = path - rowStart;
+            var take = Math.Min(block.Length - blockIndex, row.Cells.Length - rowOffset);
+            var visualStart = row.Forward
+                ? rowOffset
+                : row.Cells.Length - rowOffset - take;
+            for (var index = 0; index < take; index++)
+            {
+                var cell = row.Cells[visualStart + index];
+                glyphs.Add(new VisibleGutterGlyph(cell, block[blockIndex + index]));
+            }
+
+            blockIndex += take;
+            path += take;
+        }
+    }
+
+    private static IReadOnlyList<string> RibbonBlocks(string tape, int maxBlockLength)
+    {
+        var blocks = new List<string>();
+        var builder = new StringBuilder();
+        foreach (var word in tape.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var token = $"{word} ";
+            if (builder.Length > 0 && builder.Length + token.Length > maxBlockLength)
+            {
+                blocks.Add(builder.ToString());
+                builder.Clear();
+            }
+
+            if (token.Length > maxBlockLength)
+            {
+                if (builder.Length > 0)
+                {
+                    blocks.Add(builder.ToString());
+                    builder.Clear();
+                }
+
+                for (var index = 0; index < token.Length; index += maxBlockLength)
+                {
+                    blocks.Add(token.Substring(index, Math.Min(maxBlockLength, token.Length - index)));
+                }
+                continue;
+            }
+
+            builder.Append(token);
+        }
+
+        if (builder.Length > 0)
+        {
+            blocks.Add(builder.ToString());
+        }
+
+        return blocks;
+    }
+
+    private static int PositiveMod(int value, int modulus) =>
+        ((value % modulus) + modulus) % modulus;
 
     private static string MarketPoetryTape(string marqueeTape)
     {
@@ -1718,6 +1819,7 @@ internal sealed record FillCommand(RectI Rect, int ColorIndex);
 internal sealed record TextCommand(PsfFont Font, int X, int Y, string Text, int MaxWidth, int ColorIndex);
 internal sealed record GlyphCommand(int X, int Y, char Character, int ColorIndex);
 internal sealed record VisibleGutterGlyph(GutterCell Cell, char Character);
+internal sealed record GutterRowBlock(int Row, bool Forward, GutterCell[] Cells);
 internal sealed record GutterCell(int X, int Y, int Row, int LaneColumn, bool Forward);
 
 internal sealed class ToneBatch(int resolutionY, int frameIndex)
