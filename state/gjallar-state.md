@@ -1,6 +1,6 @@
 # Gjallar State
 
-Last updated: 2026-06-06
+Last updated: 2026-06-09
 
 ## Identity
 
@@ -32,7 +32,9 @@ surface sources
 - Current minimized-panel presentation: a top tab row. Clicking a panel title
   minimizes it; clicking its tab restores it.
 - Current marquee input: Odin's provider catalog `marqueeText`, built from the
-  Stonks securities tape interwoven with ordered VoidBot poem lines.
+  Stonks securities tape interwoven with ordered VoidBot poem lines. Gjallar
+  treats each slash-delimited stonk or poetry line as one ordered marquee queue
+  object at the render boundary.
 
 Observed live status after cursor/minimize cut:
 
@@ -77,8 +79,8 @@ Observed live status after cursor/minimize cut:
   refresh streams, cursor presentation, top-tab minimized panel presentation, and
   agent-readable panel captures.
 - Derived state: pane weights, pixel rectangles, selected fonts, one-row gutter
-  blocks, a continuous readable marquee ribbon path, dirty rectangles, glyph
-  runs, title-bar hit regions, top-tab restore affordances, local
+  blocks, ordered marquee queue objects, object-to-gutter glyph placement, dirty
+  rectangles, glyph runs, title-bar hit regions, top-tab restore affordances, local
   minimized-panel keys, and compact text projections.
 - Forbidden writers: discovery systems must not decide Gjallar layout; providers
   must not tune themselves for Nightwing; framebuffer backends must not invent
@@ -171,9 +173,10 @@ Source: `https://en.wikipedia.org/wiki/Linux_framebuffer`
 - `FontAtlas.ForTextBox` picks a font per panel based on available pixel area
   and text pressure.
 - `FrameDocument` draws text, panels, gutters, marquee glyphs, and fills. It
-  lowers the incoming marquee as a continuous ribbon of readable text chunks.
-  Adjacent gutter blocks alternate direction by changing chunk placement along
-  the path; letters inside each chunk keep normal left-to-right order.
+  lowers the incoming marquee by splitting Odin's slash-delimited tape into
+  ordered queue objects. Each object is emitted into a left-to-right or
+  right-to-left gutter row without changing the queue order; right-to-left rows
+  place the object from the far side while keeping the object readable.
 - Minimized top-level provider panels reserve a tab strip at the top of the
   active scene. The tabs are normal title-hit regions, so minimize and restore
   use the same local operator state instead of a separate recovery path.
@@ -196,6 +199,10 @@ Source: `https://en.wikipedia.org/wiki/Linux_framebuffer`
 - 2026-06-07 ribbon correction: the marquee is a single continuous ribbon path
   through the gutter blocks. A phrase or quote leaving one gutter continues in
   the next gutter, while chunk text remains readable.
+- 2026-06-09 marquee object correction: slash-delimited stonks and poetry lines
+  are now the render queue objects. The gutter direction controls where an
+  object is emitted, not the canonical order of objects, and the old word-block
+  splitter no longer owns phrase boundaries.
 - Transport debt remains explicit: the live Nightwing body still consumes the
   compatibility Eve deck bridge. The target input organ is native CultNet /
   CultMesh typed state over the real GameCult transport, not a web-shaped

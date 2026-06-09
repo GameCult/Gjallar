@@ -1010,8 +1010,7 @@ internal sealed class FrameDocument
     {
         var font = fonts.Edge;
         var tones = new ToneBatch(Height, frameIndex);
-        var tape = MarketPoetryTape(marqueeTape);
-        var glyphs = BuildMazePoetry(font, cells, frameIndex, tones, tape);
+        var glyphs = BuildMazePoetry(font, cells, frameIndex, tones, marqueeTape);
         var colors = tones.Resolve();
         foreach (var glyph in glyphs)
         {
@@ -1163,13 +1162,12 @@ internal sealed class FrameDocument
 
     public static IReadOnlyList<string> VisibleGutterRows(IReadOnlyList<GutterCell> cells, int frameIndex, string marqueeTape)
     {
-        var tape = MarketPoetryTape(marqueeTape);
-        if (string.IsNullOrWhiteSpace(tape))
+        if (string.IsNullOrWhiteSpace(marqueeTape))
         {
             return [];
         }
 
-        return VisibleGutterGlyphs(cells, frameIndex, tape)
+        return VisibleGutterGlyphs(cells, frameIndex, marqueeTape)
             .GroupBy(static glyph => glyph.Cell.Row)
             .OrderBy(static group => group.Key)
             .Select(static group => new string(group.OrderBy(static glyph => glyph.Cell.LaneColumn).Select(static glyph => glyph.Character).ToArray()).Trim())
@@ -1190,9 +1188,8 @@ internal sealed class FrameDocument
             return [];
         }
 
-        var maxBlockLength = Math.Clamp(rows.Min(static row => row.Cells.Length) / 5, 18, 42);
-        var blocks = RibbonBlocks(tape, maxBlockLength);
-        var cycleLength = blocks.Sum(static block => block.Length);
+        var objects = MarqueeObjects(tape);
+        var cycleLength = objects.Sum(static item => item.Width);
         if (cycleLength <= 0)
         {
             return [];
@@ -1200,121 +1197,97 @@ internal sealed class FrameDocument
 
         var scroll = (frameIndex / framesPerScrollCell) % cycleLength;
         var glyphs = new List<VisibleGutterGlyph>();
-        var blockStart = 0;
-        foreach (var block in blocks)
+        var objectStart = 0;
+        foreach (var item in objects)
         {
-            var firstStart = PositiveMod(blockStart + scroll, cycleLength);
+            var firstStart = PositiveMod(objectStart + scroll, cycleLength);
             for (var pathStart = firstStart; pathStart < pathLength; pathStart += cycleLength)
             {
-                AddRibbonBlockGlyphs(glyphs, rows, pathLength, block, pathStart);
+                AddMarqueeObjectGlyphs(glyphs, rows, pathLength, item, pathStart);
             }
 
-            for (var pathStart = firstStart - cycleLength; pathStart > -block.Length; pathStart -= cycleLength)
+            for (var pathStart = firstStart - cycleLength; pathStart > -item.Width; pathStart -= cycleLength)
             {
-                AddRibbonBlockGlyphs(glyphs, rows, pathLength, block, pathStart);
+                AddMarqueeObjectGlyphs(glyphs, rows, pathLength, item, pathStart);
             }
 
-            blockStart += block.Length;
+            objectStart += item.Width;
         }
 
         return glyphs;
     }
 
-    private static void AddRibbonBlockGlyphs(List<VisibleGutterGlyph> glyphs, IReadOnlyList<GutterRowBlock> rows, int pathLength, string block, int pathStart)
+    private static void AddMarqueeObjectGlyphs(List<VisibleGutterGlyph> glyphs, IReadOnlyList<GutterRowBlock> rows, int pathLength, MarqueeObject item, int pathStart)
     {
-        var blockIndex = 0;
+        var text = item.Text;
+        var itemIndex = 0;
         var path = pathStart;
-        while (blockIndex < block.Length && path < pathLength)
+        if (path < 0)
         {
-            if (path < 0)
-            {
-                var skip = Math.Min(block.Length - blockIndex, -path);
-                blockIndex += skip;
-                path += skip;
-                continue;
-            }
+            var skip = Math.Min(text.Length, -path);
+            itemIndex += skip;
+            path += skip;
+        }
 
-            var rowStart = 0;
-            GutterRowBlock? row = null;
-            foreach (var candidate in rows)
+        if (itemIndex >= text.Length || path >= pathLength)
+        {
+            return;
+        }
+
+        var rowStart = 0;
+        foreach (var row in rows)
+        {
+            var rowEnd = rowStart + row.Cells.Length;
+            if (path < rowEnd)
             {
-                var rowEnd = rowStart + candidate.Cells.Length;
-                if (path < rowEnd)
+                var rowOffset = path - rowStart;
+                var take = Math.Min(text.Length - itemIndex, row.Cells.Length - rowOffset);
+                var visualStart = row.Forward
+                    ? rowOffset
+                    : row.Cells.Length - rowOffset - take;
+                for (var index = 0; index < take; index++)
                 {
-                    row = candidate;
-                    break;
+                    var cell = row.Cells[visualStart + index];
+                    glyphs.Add(new VisibleGutterGlyph(cell, text[itemIndex + index]));
                 }
-                rowStart = rowEnd;
-            }
-
-            if (row is null)
-            {
                 return;
             }
 
-            var rowOffset = path - rowStart;
-            var take = Math.Min(block.Length - blockIndex, row.Cells.Length - rowOffset);
-            var visualStart = row.Forward
-                ? rowOffset
-                : row.Cells.Length - rowOffset - take;
-            for (var index = 0; index < take; index++)
-            {
-                var cell = row.Cells[visualStart + index];
-                glyphs.Add(new VisibleGutterGlyph(cell, block[blockIndex + index]));
-            }
-
-            blockIndex += take;
-            path += take;
+            rowStart = rowEnd;
         }
     }
 
-    private static IReadOnlyList<string> RibbonBlocks(string tape, int maxBlockLength)
+    private static IReadOnlyList<MarqueeObject> MarqueeObjects(string tape)
     {
-        var blocks = new List<string>();
-        var builder = new StringBuilder();
-        foreach (var word in tape.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        var normalized = string.IsNullOrWhiteSpace(tape) ? "" : tape.Replace('\r', ' ').Replace('\n', ' ').Trim();
+        if (string.IsNullOrWhiteSpace(normalized))
         {
-            var token = $"{word} ";
-            if (builder.Length > 0 && builder.Length + token.Length > maxBlockLength)
+            return [];
+        }
+
+        var objects = new List<MarqueeObject>();
+        foreach (var segment in normalized.Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var text = segment.Replace('\t', ' ').Replace("  ", " ").Trim();
+            while (text.Contains("  ", StringComparison.Ordinal))
             {
-                blocks.Add(builder.ToString());
-                builder.Clear();
+                text = text.Replace("  ", " ");
             }
 
-            if (token.Length > maxBlockLength)
+            if (text.Length == 0)
             {
-                if (builder.Length > 0)
-                {
-                    blocks.Add(builder.ToString());
-                    builder.Clear();
-                }
-
-                for (var index = 0; index < token.Length; index += maxBlockLength)
-                {
-                    blocks.Add(token.Substring(index, Math.Min(maxBlockLength, token.Length - index)));
-                }
                 continue;
             }
 
-            builder.Append(token);
+            var displayText = $" {text}   ";
+            objects.Add(new MarqueeObject(objects.Count, displayText, displayText.Length));
         }
 
-        if (builder.Length > 0)
-        {
-            blocks.Add(builder.ToString());
-        }
-
-        return blocks;
+        return objects;
     }
 
     private static int PositiveMod(int value, int modulus) =>
         ((value % modulus) + modulus) % modulus;
-
-    private static string MarketPoetryTape(string marqueeTape)
-    {
-        var tape = string.IsNullOrWhiteSpace(marqueeTape) ? "" : marqueeTape.Replace('\r', ' ').Replace('\n', ' ').Trim();
-        return string.IsNullOrWhiteSpace(tape) ? "" : $" {tape} / ";
-    }
 
     private static void AddBorderCommands(RectI rect, ToneBatch tones, List<FillCommand> fills)
     {
@@ -2067,6 +2040,7 @@ internal sealed record FillCommand(RectI Rect, int ColorIndex);
 internal sealed record TextCommand(PsfFont Font, int X, int Y, string Text, int MaxWidth, int ColorIndex);
 internal sealed record GlyphCommand(int X, int Y, char Character, int ColorIndex);
 internal sealed record VisibleGutterGlyph(GutterCell Cell, char Character);
+internal sealed record MarqueeObject(int QueueIndex, string Text, int Width);
 internal sealed record GutterRowBlock(int Row, bool Forward, GutterCell[] Cells);
 internal sealed record GutterCell(int X, int Y, int Row, int LaneColumn, bool Forward);
 

@@ -13,14 +13,14 @@ regions may use different text resolutions.
   refresh output. Gjallar also owns local cursor state, title-bar hit testing,
   and minimized/restored panel state.
 - Inputs: provider catalogs, provider-owned surface trees, display dimensions,
-  font assets, runtime flags, mouse input, Odin's canonical marquee tape, and
-  eventually direct CultMesh subscriptions.
+  font assets, runtime flags, mouse input, Odin's canonical slash-delimited
+  marquee tape, and eventually direct CultMesh subscriptions.
 - Outputs: `gjallar.overview` composition state, visible framebuffer frames,
   cursor presentation, top-tab minimized panel presentation, and renderer
   telemetry.
 - Derived state: pane weights, pixel rectangles, chosen font sizes, one-row
-  gutter blocks, continuous readable marquee ribbon positions, dirty rectangles,
-  glyph runs, title-bar hit regions, top-tab restore affordances, local
+  gutter blocks, ordered marquee queue objects, object-to-gutter glyph
+  placement, dirty rectangles, glyph runs, title-bar hit regions, top-tab restore affordances, local
   minimized-panel keys, and compact agent-readable projections.
 - Forbidden writers: discovery systems do not decide Gjallar layout; providers
   do not tune themselves for Nightwing; framebuffer backends do not invent
@@ -46,7 +46,7 @@ Odin provider catalog
   -> minimized top-tab strip reservation
   -> title-bar hit-region emission
   -> one-row gutter cell plan
-  -> continuous readable marquee ribbon path
+  -> slash-delimited marquee queue object lowering
   -> per-panel text pressure estimate
   -> PSF font selection
   -> frame draw commands
