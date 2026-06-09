@@ -1191,101 +1191,63 @@ internal sealed class FrameDocument
             return characters;
         }
 
-        var objects = MarqueeObjects(tape);
-        var cycleLength = objects.Sum(static item => item.Width);
+        var objects = MarqueeQueue.FromTape(tape);
+        var cycleLength = objects.CycleWidth;
         if (cycleLength <= 0)
         {
             return characters;
         }
 
         var scroll = (frameIndex / framesPerScrollCell) % cycleLength;
-        var objectStart = 0;
-        foreach (var item in objects)
+        for (var itemIndex = 0; itemIndex < objects.Count; itemIndex++)
         {
-            var firstStart = PositiveMod(objectStart + scroll, cycleLength);
+            var firstStart = PositiveMod(objects.Start[itemIndex] + scroll, cycleLength);
             for (var pathStart = firstStart; pathStart < ribbon.Count; pathStart += cycleLength)
             {
-                WriteMarqueeObject(characters, ribbon, item, pathStart);
+                WriteMarqueeObject(characters, ribbon, objects, itemIndex, pathStart);
             }
 
-            for (var pathStart = firstStart - cycleLength; pathStart > -item.Width; pathStart -= cycleLength)
+            for (var pathStart = firstStart - cycleLength; pathStart > -objects.Width[itemIndex]; pathStart -= cycleLength)
             {
-                WriteMarqueeObject(characters, ribbon, item, pathStart);
+                WriteMarqueeObject(characters, ribbon, objects, itemIndex, pathStart);
             }
-
-            objectStart += item.Width;
         }
 
         return characters;
     }
 
-    private static void WriteMarqueeObject(char[] characters, GutterRibbon ribbon, MarqueeObject item, int pathStart)
+    private static void WriteMarqueeObject(char[] characters, GutterRibbon ribbon, MarqueeQueue objects, int itemIndex, int pathStart)
     {
-        var text = item.Text;
-        var itemIndex = 0;
+        var text = objects.Text[itemIndex];
+        var textIndex = 0;
         var path = pathStart;
         if (path < 0)
         {
             var skip = Math.Min(text.Length, -path);
-            itemIndex += skip;
+            textIndex += skip;
             path += skip;
         }
 
-        if (itemIndex >= text.Length || path >= ribbon.Count)
+        if (textIndex >= text.Length || path >= ribbon.Count)
         {
             return;
         }
 
-        while (itemIndex < text.Length && path < ribbon.Count)
+        var row = ribbon.Row[path];
+        var forward = ribbon.Forward[path];
+        var take = 1;
+        while (textIndex + take < text.Length && path + take < ribbon.Count && ribbon.Row[path + take] == row)
         {
-            var row = ribbon.Row[path];
-            var forward = ribbon.Forward[path];
-            var take = 1;
-            while (itemIndex + take < text.Length && path + take < ribbon.Count && ribbon.Row[path + take] == row)
-            {
-                take++;
-            }
-
-            for (var index = 0; index < take; index++)
-            {
-                var sourceIndex = forward
-                    ? itemIndex + index
-                    : itemIndex + take - index - 1;
-                characters[path + index] = text[sourceIndex];
-            }
-
-            itemIndex += take;
-            path += take;
-        }
-    }
-
-    private static IReadOnlyList<MarqueeObject> MarqueeObjects(string tape)
-    {
-        var normalized = string.IsNullOrWhiteSpace(tape) ? "" : tape.Replace('\r', ' ').Replace('\n', ' ').Trim();
-        if (string.IsNullOrWhiteSpace(normalized))
-        {
-            return [];
+            take++;
         }
 
-        var objects = new List<MarqueeObject>();
-        foreach (var segment in normalized.Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        for (var index = 0; index < take; index++)
         {
-            var text = segment.Replace('\t', ' ').Replace("  ", " ").Trim();
-            while (text.Contains("  ", StringComparison.Ordinal))
-            {
-                text = text.Replace("  ", " ");
-            }
-
-            if (text.Length == 0)
-            {
-                continue;
-            }
-
-            var displayText = $" {text}   ";
-            objects.Add(new MarqueeObject(objects.Count, displayText, displayText.Length));
+            var sourceIndex = forward
+                ? textIndex + index
+                : textIndex + take - index - 1;
+            characters[path + index] = text[sourceIndex];
         }
-
-        return objects;
     }
 
     private static int PositiveMod(int value, int modulus) =>
@@ -2041,8 +2003,73 @@ internal sealed record TextItem(string Prefix, string Text)
 internal sealed record FillCommand(RectI Rect, int ColorIndex);
 internal sealed record TextCommand(PsfFont Font, int X, int Y, string Text, int MaxWidth, int ColorIndex);
 internal sealed record GlyphCommand(int X, int Y, char Character, int ColorIndex);
-internal sealed record MarqueeObject(int QueueIndex, string Text, int Width);
 internal sealed record GutterCell(int X, int Y, int Row, int LaneColumn, bool Forward);
+
+internal sealed class MarqueeQueue
+{
+    public static readonly MarqueeQueue Empty = new([], [], [], []);
+
+    public MarqueeQueue(int[] queueIndex, string[] text, int[] width, int[] start)
+    {
+        QueueIndex = queueIndex;
+        Text = text;
+        Width = width;
+        Start = start;
+        CycleWidth = width.Sum();
+    }
+
+    public int[] QueueIndex { get; }
+    public string[] Text { get; }
+    public int[] Width { get; }
+    public int[] Start { get; }
+    public int Count => Text.Length;
+    public int CycleWidth { get; }
+
+    public static MarqueeQueue FromTape(string tape)
+    {
+        var normalized = string.IsNullOrWhiteSpace(tape) ? "" : tape.Replace('\r', ' ').Replace('\n', ' ').Trim();
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            return Empty;
+        }
+
+        var texts = new List<string>();
+        foreach (var segment in normalized.Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var text = segment.Replace('\t', ' ').Replace("  ", " ").Trim();
+            while (text.Contains("  ", StringComparison.Ordinal))
+            {
+                text = text.Replace("  ", " ");
+            }
+
+            if (text.Length == 0)
+            {
+                continue;
+            }
+
+            texts.Add($" {text}   ");
+        }
+
+        if (texts.Count == 0)
+        {
+            return Empty;
+        }
+
+        var queueIndex = new int[texts.Count];
+        var width = new int[texts.Count];
+        var start = new int[texts.Count];
+        var cursor = 0;
+        for (var index = 0; index < texts.Count; index++)
+        {
+            queueIndex[index] = index;
+            width[index] = texts[index].Length;
+            start[index] = cursor;
+            cursor += width[index];
+        }
+
+        return new MarqueeQueue(queueIndex, texts.ToArray(), width, start);
+    }
+}
 
 internal sealed class GutterRibbon
 {
