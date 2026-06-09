@@ -570,7 +570,7 @@ internal sealed class GjallarRenderer : IDisposable
             frame.DrawPanelDecorations(scene.Panels, frameIndex);
             decorMs = ElapsedMilliseconds(step, Stopwatch.GetTimestamp());
             step = Stopwatch.GetTimestamp();
-            frame.DrawGutterMaze(scene.GutterCells, frameIndex, scene.MarqueeTape);
+            frame.DrawGutterMaze(scene.GutterRibbon, frameIndex, scene.MarqueeTape);
             gutterMs = ElapsedMilliseconds(step, Stopwatch.GetTimestamp());
         }
 
@@ -641,7 +641,7 @@ internal sealed class GjallarRenderer : IDisposable
         Directory.CreateDirectory(Path.GetDirectoryName(config.StatusPath) ?? ".");
         var visibleMarqueeRows = sceneCache is null
             ? []
-            : FrameDocument.VisibleGutterRows(sceneCache.GutterCells, frames, sceneCache.MarqueeTape)
+            : FrameDocument.VisibleGutterRows(sceneCache.GutterRibbon, frames, sceneCache.MarqueeTape)
                 .Select(static row => Sample(row, 160))
                 .ToArray();
         var document = new
@@ -672,10 +672,12 @@ internal sealed class GjallarRenderer : IDisposable
                 minimizedTitles,
                 minimizedPlacement = "top-tabs",
                 titleHitRegions = titleHitRegionCount,
-                gutterCells = sceneCache?.GutterCells.Count ?? 0,
-                gutterRows = sceneCache?.GutterCells.Select(static cell => cell.Row).Distinct().Count() ?? 0,
+                gutterCells = sceneCache?.GutterRibbon.Count ?? 0,
+                gutterRibbonAddresses = sceneCache?.GutterRibbon.Count ?? 0,
+                gutterMemoryFormat = "ecs-soa:x,y,row,laneColumn,forward",
+                gutterRows = sceneCache?.GutterRibbon.Row.Distinct().Count() ?? 0,
                 gutterPolicy = "single-row-top-between-panels-bottom",
-                gutterFlow = "continuous-readable-ribbon",
+                gutterFlow = "continuous-addressable-ribbon",
                 marqueeChars = sceneCache?.MarqueeTape.Length ?? 0,
                 marqueeSample = Sample(sceneCache?.MarqueeTape ?? "", 160),
                 visibleMarqueeRows,
@@ -719,7 +721,7 @@ internal sealed class GjallarRenderer : IDisposable
         using var state = JsonDocument.Parse(stateJson);
         if (!EveNode.TryRoot(state.RootElement, out var root))
         {
-            sceneCache = new SceneCache(stateJson, [], [], "", minimizedSnapshotVersion);
+            sceneCache = new SceneCache(stateJson, [], GutterRibbon.Empty, "", minimizedSnapshotVersion);
             return sceneCache;
         }
 
@@ -735,7 +737,7 @@ internal sealed class GjallarRenderer : IDisposable
             : MinimizedTabs(minimizedProviders, new RectI(0, outerY, framebuffer.Width, tabHeight), gutter).ToList();
         packed.AddRange(AabbPacker.Pack(activeProviders, activeRect, gutter));
         var packedArray = packed.ToArray();
-        sceneCache = new SceneCache(stateJson, packedArray, FrameDocument.BuildGutterCells(framebuffer.Width, framebuffer.Height, fonts.Edge, packedArray, gutter), root.MarqueeText, minimizedSnapshotVersion);
+        sceneCache = new SceneCache(stateJson, packedArray, FrameDocument.BuildGutterRibbon(framebuffer.Width, framebuffer.Height, fonts.Edge, packedArray, gutter), root.MarqueeText, minimizedSnapshotVersion);
         return sceneCache;
     }
 
@@ -763,7 +765,7 @@ internal sealed class GjallarRenderer : IDisposable
     }
 }
 
-internal sealed record SceneCache(byte[] StateJson, IReadOnlyList<PackedPanel> Panels, IReadOnlyList<GutterCell> GutterCells, string MarqueeTape, int MinimizedVersion);
+internal sealed record SceneCache(byte[] StateJson, IReadOnlyList<PackedPanel> Panels, GutterRibbon GutterRibbon, string MarqueeTape, int MinimizedVersion);
 internal readonly record struct FrameTimings(double CopyMs, double DecorMs, double GutterMs, double PresentMs);
 internal sealed record ProviderCatalog(IReadOnlyList<ProviderCatalogEntry> Providers, string? MarqueeText = null);
 internal sealed record ProviderCatalogEntry(
@@ -1006,11 +1008,11 @@ internal sealed class FrameDocument
         }
     }
 
-    public void DrawGutterMaze(IReadOnlyList<GutterCell> cells, int frameIndex, string marqueeTape)
+    public void DrawGutterMaze(GutterRibbon ribbon, int frameIndex, string marqueeTape)
     {
         var font = fonts.Edge;
         var tones = new ToneBatch(Height, frameIndex);
-        var glyphs = BuildMazePoetry(font, cells, frameIndex, tones, marqueeTape);
+        var glyphs = BuildMazePoetry(font, ribbon, frameIndex, tones, marqueeTape);
         var colors = tones.Resolve();
         foreach (var glyph in glyphs)
         {
@@ -1074,7 +1076,7 @@ internal sealed class FrameDocument
         }
     }
 
-    public static IReadOnlyList<GutterCell> BuildGutterCells(int width, int height, PsfFont font, IReadOnlyList<PackedPanel> panels, int edgeGutterHeight)
+    public static GutterRibbon BuildGutterRibbon(int width, int height, PsfFont font, IReadOnlyList<PackedPanel> panels, int edgeGutterHeight)
     {
         var columns = Math.Max(1, (width + Math.Max(1, font.Width) - 1) / Math.Max(1, font.Width));
         var spans = MergeVerticalSpans(panels.Select(panel => (Start: panel.Rect.Y, End: panel.Rect.Y + panel.Rect.Height))).ToArray();
@@ -1097,7 +1099,7 @@ internal sealed class FrameDocument
 
         var bottomY = Math.Max(0, height - edge + edgeTextY);
         AddHorizontalGutterRow(cells, columns, font, width, lane, bottomY);
-        return cells;
+        return GutterRibbon.FromCells(cells);
     }
 
     private static IReadOnlyList<(int Start, int End)> MergeVerticalSpans(IEnumerable<(int Start, int End)> spans)
@@ -1139,7 +1141,7 @@ internal sealed class FrameDocument
         }
     }
 
-    private IReadOnlyList<GlyphCommand> BuildMazePoetry(PsfFont font, IReadOnlyList<GutterCell> cells, int frameIndex, ToneBatch tones, string tape)
+    private IReadOnlyList<GlyphCommand> BuildMazePoetry(PsfFont font, GutterRibbon ribbon, int frameIndex, ToneBatch tones, string tape)
     {
         if (string.IsNullOrWhiteSpace(tape))
         {
@@ -1147,77 +1149,77 @@ internal sealed class FrameDocument
         }
 
         var glyphs = new List<GlyphCommand>();
-        foreach (var glyph in VisibleGutterGlyphs(cells, frameIndex, tape))
+        var characters = RibbonCharacters(ribbon, frameIndex, tape);
+        for (var address = 0; address < characters.Length; address++)
         {
-            if (glyph.Character == ' ')
+            var character = characters[address];
+            if (character == ' ')
             {
                 continue;
             }
 
-            glyphs.Add(new GlyphCommand(glyph.Cell.X, glyph.Cell.Y, glyph.Character, tones.Add(glyph.Cell.X, glyph.Cell.Y, CultMathTone.Edge, font.Width)));
+            var x = ribbon.X[address];
+            var y = ribbon.Y[address];
+            glyphs.Add(new GlyphCommand(x, y, character, tones.Add(x, y, CultMathTone.Edge, font.Width)));
         }
 
         return glyphs;
     }
 
-    public static IReadOnlyList<string> VisibleGutterRows(IReadOnlyList<GutterCell> cells, int frameIndex, string marqueeTape)
+    public static IReadOnlyList<string> VisibleGutterRows(GutterRibbon ribbon, int frameIndex, string marqueeTape)
     {
         if (string.IsNullOrWhiteSpace(marqueeTape))
         {
             return [];
         }
 
-        return VisibleGutterGlyphs(cells, frameIndex, marqueeTape)
-            .GroupBy(static glyph => glyph.Cell.Row)
+        var characters = RibbonCharacters(ribbon, frameIndex, marqueeTape);
+        return Enumerable.Range(0, ribbon.Count)
+            .GroupBy(address => ribbon.Row[address])
             .OrderBy(static group => group.Key)
-            .Select(static group => new string(group.OrderBy(static glyph => glyph.Cell.LaneColumn).Select(static glyph => glyph.Character).ToArray()).Trim())
+            .Select(group => new string(group.OrderBy(address => ribbon.LaneColumn[address]).Select(address => characters[address]).ToArray()).Trim())
             .ToArray();
     }
 
-    private static IReadOnlyList<VisibleGutterGlyph> VisibleGutterGlyphs(IReadOnlyList<GutterCell> cells, int frameIndex, string tape)
+    private static char[] RibbonCharacters(GutterRibbon ribbon, int frameIndex, string tape)
     {
         const int framesPerScrollCell = 8;
-        var rows = cells
-            .GroupBy(static cell => cell.Row)
-            .OrderBy(static group => group.Key)
-            .Select(static group => new GutterRowBlock(group.Key, group.First().Forward, group.OrderBy(static cell => cell.LaneColumn).ToArray()))
-            .ToArray();
-        var pathLength = rows.Sum(static row => row.Cells.Length);
-        if (pathLength <= 0)
+        var characters = new char[ribbon.Count];
+        Array.Fill(characters, ' ');
+        if (ribbon.Count <= 0)
         {
-            return [];
+            return characters;
         }
 
         var objects = MarqueeObjects(tape);
         var cycleLength = objects.Sum(static item => item.Width);
         if (cycleLength <= 0)
         {
-            return [];
+            return characters;
         }
 
         var scroll = (frameIndex / framesPerScrollCell) % cycleLength;
-        var glyphs = new List<VisibleGutterGlyph>();
         var objectStart = 0;
         foreach (var item in objects)
         {
             var firstStart = PositiveMod(objectStart + scroll, cycleLength);
-            for (var pathStart = firstStart; pathStart < pathLength; pathStart += cycleLength)
+            for (var pathStart = firstStart; pathStart < ribbon.Count; pathStart += cycleLength)
             {
-                AddMarqueeObjectGlyphs(glyphs, rows, pathLength, item, pathStart);
+                WriteMarqueeObject(characters, ribbon, item, pathStart);
             }
 
             for (var pathStart = firstStart - cycleLength; pathStart > -item.Width; pathStart -= cycleLength)
             {
-                AddMarqueeObjectGlyphs(glyphs, rows, pathLength, item, pathStart);
+                WriteMarqueeObject(characters, ribbon, item, pathStart);
             }
 
             objectStart += item.Width;
         }
 
-        return glyphs;
+        return characters;
     }
 
-    private static void AddMarqueeObjectGlyphs(List<VisibleGutterGlyph> glyphs, IReadOnlyList<GutterRowBlock> rows, int pathLength, MarqueeObject item, int pathStart)
+    private static void WriteMarqueeObject(char[] characters, GutterRibbon ribbon, MarqueeObject item, int pathStart)
     {
         var text = item.Text;
         var itemIndex = 0;
@@ -1229,31 +1231,31 @@ internal sealed class FrameDocument
             path += skip;
         }
 
-        if (itemIndex >= text.Length || path >= pathLength)
+        if (itemIndex >= text.Length || path >= ribbon.Count)
         {
             return;
         }
 
-        var rowStart = 0;
-        foreach (var row in rows)
+        while (itemIndex < text.Length && path < ribbon.Count)
         {
-            var rowEnd = rowStart + row.Cells.Length;
-            if (path < rowEnd)
+            var row = ribbon.Row[path];
+            var forward = ribbon.Forward[path];
+            var take = 1;
+            while (itemIndex + take < text.Length && path + take < ribbon.Count && ribbon.Row[path + take] == row)
             {
-                var rowOffset = path - rowStart;
-                var take = Math.Min(text.Length - itemIndex, row.Cells.Length - rowOffset);
-                var visualStart = row.Forward
-                    ? rowOffset
-                    : row.Cells.Length - rowOffset - take;
-                for (var index = 0; index < take; index++)
-                {
-                    var cell = row.Cells[visualStart + index];
-                    glyphs.Add(new VisibleGutterGlyph(cell, text[itemIndex + index]));
-                }
-                return;
+                take++;
             }
 
-            rowStart = rowEnd;
+            for (var index = 0; index < take; index++)
+            {
+                var sourceIndex = forward
+                    ? itemIndex + index
+                    : itemIndex + take - index - 1;
+                characters[path + index] = text[sourceIndex];
+            }
+
+            itemIndex += take;
+            path += take;
         }
     }
 
@@ -2039,10 +2041,65 @@ internal sealed record TextItem(string Prefix, string Text)
 internal sealed record FillCommand(RectI Rect, int ColorIndex);
 internal sealed record TextCommand(PsfFont Font, int X, int Y, string Text, int MaxWidth, int ColorIndex);
 internal sealed record GlyphCommand(int X, int Y, char Character, int ColorIndex);
-internal sealed record VisibleGutterGlyph(GutterCell Cell, char Character);
 internal sealed record MarqueeObject(int QueueIndex, string Text, int Width);
-internal sealed record GutterRowBlock(int Row, bool Forward, GutterCell[] Cells);
 internal sealed record GutterCell(int X, int Y, int Row, int LaneColumn, bool Forward);
+
+internal sealed class GutterRibbon
+{
+    public static readonly GutterRibbon Empty = new([], [], [], [], []);
+
+    public GutterRibbon(int[] x, int[] y, int[] row, int[] laneColumn, bool[] forward)
+    {
+        X = x;
+        Y = y;
+        Row = row;
+        LaneColumn = laneColumn;
+        Forward = forward;
+    }
+
+    public int[] X { get; }
+    public int[] Y { get; }
+    public int[] Row { get; }
+    public int[] LaneColumn { get; }
+    public bool[] Forward { get; }
+    public int Count => X.Length;
+
+    public static GutterRibbon FromCells(IReadOnlyList<GutterCell> cells)
+    {
+        if (cells.Count == 0)
+        {
+            return Empty;
+        }
+
+        var ordered = cells
+            .GroupBy(static cell => cell.Row)
+            .OrderBy(static group => group.Key)
+            .SelectMany(static group =>
+            {
+                var forward = group.First().Forward;
+                return forward
+                    ? group.OrderBy(static cell => cell.LaneColumn)
+                    : group.OrderByDescending(static cell => cell.LaneColumn);
+            })
+            .ToArray();
+        var x = new int[ordered.Length];
+        var y = new int[ordered.Length];
+        var row = new int[ordered.Length];
+        var laneColumn = new int[ordered.Length];
+        var forwardColumn = new bool[ordered.Length];
+        for (var index = 0; index < ordered.Length; index++)
+        {
+            var cell = ordered[index];
+            x[index] = cell.X;
+            y[index] = cell.Y;
+            row[index] = cell.Row;
+            laneColumn[index] = cell.LaneColumn;
+            forwardColumn[index] = cell.Forward;
+        }
+
+        return new GutterRibbon(x, y, row, laneColumn, forwardColumn);
+    }
+}
 
 internal sealed class ToneBatch(int resolutionY, int frameIndex)
 {

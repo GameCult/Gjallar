@@ -19,8 +19,9 @@ regions may use different text resolutions.
   cursor presentation, top-tab minimized panel presentation, and renderer
   telemetry.
 - Derived state: pane weights, pixel rectangles, chosen font sizes, one-row
-  gutter blocks, ordered marquee queue objects, object-to-gutter glyph
-  placement, dirty rectangles, glyph runs, title-bar hit regions, top-tab restore affordances, local
+  gutter blocks, an ECS-style structure-of-arrays gutter ribbon, ordered
+  marquee queue objects, ribbon occupancy, dirty rectangles, glyph runs,
+  title-bar hit regions, top-tab restore affordances, local
   minimized-panel keys, and compact agent-readable projections.
 - Forbidden writers: discovery systems do not decide Gjallar layout; providers
   do not tune themselves for Nightwing; framebuffer backends do not invent
@@ -45,8 +46,8 @@ Odin provider catalog
   -> local minimized-state application
   -> minimized top-tab strip reservation
   -> title-bar hit-region emission
-  -> one-row gutter cell plan
-  -> slash-delimited marquee queue object lowering
+  -> one-row gutter cell plan as an addressable SoA ribbon
+  -> slash-delimited marquee queue object lowering into ribbon occupancy
   -> per-panel text pressure estimate
   -> PSF font selection
   -> frame draw commands

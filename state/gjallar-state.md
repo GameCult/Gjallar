@@ -79,8 +79,9 @@ Observed live status after cursor/minimize cut:
   refresh streams, cursor presentation, top-tab minimized panel presentation, and
   agent-readable panel captures.
 - Derived state: pane weights, pixel rectangles, selected fonts, one-row gutter
-  blocks, ordered marquee queue objects, object-to-gutter glyph placement, dirty
-  rectangles, glyph runs, title-bar hit regions, top-tab restore affordances, local
+  blocks, an ECS-style structure-of-arrays gutter ribbon, ordered marquee queue
+  objects, ribbon occupancy, dirty rectangles, glyph runs, title-bar hit
+  regions, top-tab restore affordances, local
   minimized-panel keys, and compact text projections.
 - Forbidden writers: discovery systems must not decide Gjallar layout; providers
   must not tune themselves for Nightwing; framebuffer backends must not invent
@@ -174,9 +175,11 @@ Source: `https://en.wikipedia.org/wiki/Linux_framebuffer`
   and text pressure.
 - `FrameDocument` draws text, panels, gutters, marquee glyphs, and fills. It
   lowers the incoming marquee by splitting Odin's slash-delimited tape into
-  ordered queue objects. Each object is emitted into a left-to-right or
-  right-to-left gutter row without changing the queue order; right-to-left rows
-  place the object from the far side while keeping the object readable.
+  ordered queue objects. The gutter is modeled as a continuous addressable
+  ribbon backed by structure-of-arrays columns for screen coordinates, row,
+  lane, and direction. Each object is written into ribbon occupancy first, then
+  projected to framebuffer cells; right-to-left rows flip each row segment for
+  readability without changing the source queue order.
 - Minimized top-level provider panels reserve a tab strip at the top of the
   active scene. The tabs are normal title-hit regions, so minimize and restore
   use the same local operator state instead of a separate recovery path.
@@ -203,6 +206,12 @@ Source: `https://en.wikipedia.org/wiki/Linux_framebuffer`
   are now the render queue objects. The gutter direction controls where an
   object is emitted, not the canonical order of objects, and the old word-block
   splitter no longer owns phrase boundaries.
+- 2026-06-09 ribbon SoA correction: gutter rows no longer clip objects through
+  row-local placement. Gjallar builds a continuous `GutterRibbon` with
+  CultCache-compatible structure-of-arrays columns, writes object occupancy in
+  ribbon address space, then lowers occupied addresses to screen cells. This
+  removes middle-gutter entry/exit pile-ups caused by overlapping row-local
+  object fragments.
 - Transport debt remains explicit: the live Nightwing body still consumes the
   compatibility Eve deck bridge. The target input organ is native CultNet /
   CultMesh typed state over the real GameCult transport, not a web-shaped
