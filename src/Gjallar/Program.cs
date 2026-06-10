@@ -873,7 +873,8 @@ internal sealed class FrameDocument
     private void DrawPanel(PackedPanel panel, int frameIndex, string panelKey, int depth)
     {
         var rect = panel.Rect;
-        var headerFont = fonts.HeaderFor(rect.Height);
+        var title = panel.Node.Title;
+        var headerFont = fonts.HeaderFor(rect.Height, title);
         var textItems = panel.Node.TextItems().ToArray();
         var headerPad = headerFont.Height <= 5 ? 2 : 8;
         var headerBand = Math.Min(rect.Height, headerFont.Height + headerPad);
@@ -903,7 +904,6 @@ internal sealed class FrameDocument
             tones.Add(rect.X + 8, rect.Y + 8, CultMathTone.Background, headerFont.Height)));
         AddBorderCommands(rect, tones, fills);
 
-        var title = panel.Node.Title;
         TitleHitRegions.Add(new TitleHitRegion(panelKey, title, new RectI(rect.X, rect.Y, rect.Width, headerBand), panel.Minimized, depth));
         var titleText = $"{(panel.Minimized ? "+ " : "- ")}{title}";
         texts.Add(new TextCommand(headerFont, rect.X + 8, headerTextY, titleText, Math.Max(1, rect.Width - 16), tones.Add(rect.X + 8, headerTextY, CultMathTone.Header, headerFont.Width)));
@@ -2352,13 +2352,18 @@ internal sealed class FontAtlas
             "/usr/share/consolefonts/Uni2-Terminus28x14.psf.gz",
             "/usr/share/consolefonts/Lat2-Terminus32x16.psf.gz",
         };
-        var loaded = candidates.Where(path => !string.IsNullOrWhiteSpace(path) && File.Exists(path)).Select(PsfFont.Load).GroupBy(font => (font.Width, font.Height)).Select(group => group.First()).ToArray();
+        var loaded = candidates
+            .Where(path => !string.IsNullOrWhiteSpace(path) && File.Exists(path))
+            .Select(PsfFont.Load)
+            .GroupBy(font => (font.Width, font.Height))
+            .Select(group => group.OrderByDescending(font => font.SupportsKana).First())
+            .ToArray();
         if (loaded.Length == 0)
         {
             throw new InvalidOperationException("No PSF console fonts found; pass --font.");
         }
 
-        var source = loaded.OrderBy(font => font.Width * font.Height).First();
+        var source = loaded.OrderByDescending(font => font.SupportsKana).ThenBy(font => font.Width * font.Height).First();
         var generated = new[]
         {
             source.ShrinkTo(3, 3),
@@ -2370,14 +2375,18 @@ internal sealed class FontAtlas
             source.ShrinkTo(6, 10),
             source.ShrinkTo(7, 11),
         };
-        return new FontAtlas(loaded.Concat(generated).GroupBy(font => (font.Width, font.Height)).Select(group => group.First()).ToArray());
+        return new FontAtlas(loaded.Concat(generated).GroupBy(font => (font.Width, font.Height)).Select(group => group.OrderByDescending(font => font.SupportsKana).First()).ToArray());
     }
 
     public PsfFont ForTextBox(int width, int height, IReadOnlyList<TextItem> items, float weight, out int index)
     {
         var selected = fonts[0];
+        var needsKana = items.Any(item => ContainsKana(item.Prefix) || ContainsKana(item.Text));
+        var candidates = needsKana && fonts.Any(font => font.SupportsKana)
+            ? fonts.Where(font => font.SupportsKana)
+            : fonts;
         var weightedPressure = Math.Clamp(weight / 4.0f, 0.0f, 5.0f);
-        foreach (var font in fonts.OrderByDescending(font => font.Width * font.Height))
+        foreach (var font in candidates.OrderByDescending(font => font.Width * font.Height))
         {
             var columns = Math.Max(1, width / Math.Max(1, font.Width));
             var rows = Math.Max(1, height / Math.Max(1, font.LineHeight));
@@ -2393,11 +2402,16 @@ internal sealed class FontAtlas
         return selected;
     }
 
-    public PsfFont HeaderFor(int height)
+    public PsfFont HeaderFor(int height, string text = "")
     {
         var target = height < 40 ? Math.Max(3, height / 3) : Math.Max(10, Math.Min(24, height / 7));
-        return fonts.LastOrDefault(font => font.Height <= target) ?? Default;
+        var candidates = ContainsKana(text) && fonts.Any(font => font.SupportsKana)
+            ? fonts.Where(font => font.SupportsKana)
+            : fonts;
+        return candidates.LastOrDefault(font => font.Height <= target) ?? Default;
     }
+
+    private static bool ContainsKana(string text) => text.Any(ch => (ch >= '\u3040' && ch <= '\u309f') || (ch >= '\u30a0' && ch <= '\u30ff'));
 
     private static float EstimateRows(IReadOnlyList<TextItem> items, int columns)
     {
@@ -2426,21 +2440,39 @@ internal sealed class FontAtlas
 internal sealed class PsfFont
 {
     private readonly byte[][] glyphs;
+    private readonly IReadOnlyDictionary<int, int> unicodeMap;
     public int Width { get; }
     public int Height { get; }
     public int BytesPerRow { get; }
     public int LineHeight => Height + (Height <= 5 ? 1 : 2);
     public int BlockSpacing => Height <= 5 ? 0 : Math.Max(1, Height / 3);
 
-    private PsfFont(int width, int height, byte[][] glyphs)
+    private PsfFont(int width, int height, byte[][] glyphs, IReadOnlyDictionary<int, int>? unicodeMap = null)
     {
         Width = width;
         Height = height;
         BytesPerRow = (width + 7) / 8;
         this.glyphs = glyphs;
+        this.unicodeMap = unicodeMap ?? BuildIdentityMap(glyphs.Length);
     }
 
-    public byte[] Glyph(char ch) => glyphs[Math.Clamp((int)ch, 0, glyphs.Length - 1)];
+    public byte[] Glyph(char ch)
+    {
+        if (unicodeMap.TryGetValue(ch, out var glyphIndex))
+        {
+            return glyphs[Math.Clamp(glyphIndex, 0, glyphs.Length - 1)];
+        }
+
+        if (unicodeMap.TryGetValue('?', out glyphIndex))
+        {
+            return glyphs[Math.Clamp(glyphIndex, 0, glyphs.Length - 1)];
+        }
+
+        return glyphs[0];
+    }
+
+    public bool Supports(char ch) => unicodeMap.ContainsKey(ch);
+    public bool SupportsKana => Supports('あ') && Supports('ん') && Supports('ア') && Supports('ン');
 
     public PsfFont ShrinkTo(int width, int height)
     {
@@ -2450,7 +2482,7 @@ internal sealed class PsfFont
             shrunk[glyphIndex] = ShrinkGlyph(glyphs[glyphIndex], width, height);
         }
 
-        return new PsfFont(width, height, shrunk);
+        return new PsfFont(width, height, shrunk, unicodeMap);
     }
 
     public static PsfFont Load(string path)
@@ -2458,19 +2490,25 @@ internal sealed class PsfFont
         var bytes = ReadBytes(path);
         if (bytes.Length > 4 && bytes[0] == 0x36 && bytes[1] == 0x04)
         {
-            var glyphCount = (bytes[2] & 0x01) != 0 ? 512 : 256;
+            var mode = bytes[2];
+            var glyphCount = (mode & 0x01) != 0 ? 512 : 256;
             var height = bytes[3];
-            return new PsfFont(8, height, ReadGlyphs(bytes, 4, glyphCount, height, height));
+            var glyphs = ReadGlyphs(bytes, 4, glyphCount, height, height);
+            var map = (mode & 0x02) != 0 ? ReadPsf1UnicodeMap(bytes, 4 + glyphCount * height, glyphCount) : BuildIdentityMap(glyphCount);
+            return new PsfFont(8, height, glyphs, map);
         }
 
         if (bytes.Length > 32 && BitConverter.ToUInt32(bytes, 0) == 0x864ab572)
         {
             var headerSize = (int)BitConverter.ToUInt32(bytes, 8);
+            var flags = BitConverter.ToUInt32(bytes, 12);
             var glyphCount = (int)BitConverter.ToUInt32(bytes, 16);
             var charSize = (int)BitConverter.ToUInt32(bytes, 20);
             var height = (int)BitConverter.ToUInt32(bytes, 24);
             var width = (int)BitConverter.ToUInt32(bytes, 28);
-            return new PsfFont(width, height, ReadGlyphs(bytes, headerSize, glyphCount, charSize, charSize));
+            var glyphs = ReadGlyphs(bytes, headerSize, glyphCount, charSize, charSize);
+            var map = (flags & 0x01) != 0 ? ReadPsf2UnicodeMap(bytes, headerSize + glyphCount * charSize, glyphCount) : BuildIdentityMap(glyphCount);
+            return new PsfFont(width, height, glyphs, map);
         }
 
         throw new InvalidOperationException($"Unsupported PSF font: {path}");
@@ -2499,6 +2537,118 @@ internal sealed class PsfFont
         }
 
         return glyphs;
+    }
+
+    private static IReadOnlyDictionary<int, int> BuildIdentityMap(int glyphCount)
+    {
+        var map = new Dictionary<int, int>(glyphCount);
+        for (var i = 0; i < glyphCount; i++)
+        {
+            map[i] = i;
+        }
+
+        return map;
+    }
+
+    private static IReadOnlyDictionary<int, int> ReadPsf1UnicodeMap(byte[] bytes, int offset, int glyphCount)
+    {
+        var map = BuildIdentityMap(glyphCount).ToDictionary();
+        var cursor = offset;
+        for (var glyphIndex = 0; glyphIndex < glyphCount && cursor + 1 < bytes.Length; glyphIndex++)
+        {
+            while (cursor + 1 < bytes.Length)
+            {
+                var value = BitConverter.ToUInt16(bytes, cursor);
+                cursor += 2;
+                if (value == 0xffff)
+                {
+                    break;
+                }
+
+                if (value == 0xfffe)
+                {
+                    while (cursor + 1 < bytes.Length && BitConverter.ToUInt16(bytes, cursor) != 0xffff)
+                    {
+                        cursor += 2;
+                    }
+                    continue;
+                }
+
+                map.TryAdd(value, glyphIndex);
+            }
+        }
+
+        return map;
+    }
+
+    private static IReadOnlyDictionary<int, int> ReadPsf2UnicodeMap(byte[] bytes, int offset, int glyphCount)
+    {
+        var map = BuildIdentityMap(glyphCount).ToDictionary();
+        var cursor = offset;
+        for (var glyphIndex = 0; glyphIndex < glyphCount && cursor < bytes.Length; glyphIndex++)
+        {
+            var sequenceMode = false;
+            while (cursor < bytes.Length)
+            {
+                var marker = bytes[cursor];
+                if (marker == 0xff)
+                {
+                    cursor++;
+                    break;
+                }
+
+                if (marker == 0xfe)
+                {
+                    sequenceMode = true;
+                    cursor++;
+                    continue;
+                }
+
+                if (TryReadUtf8Codepoint(bytes, ref cursor, out var codepoint) && !sequenceMode)
+                {
+                    map.TryAdd(codepoint, glyphIndex);
+                }
+            }
+        }
+
+        return map;
+    }
+
+    private static bool TryReadUtf8Codepoint(byte[] bytes, ref int cursor, out int codepoint)
+    {
+        codepoint = 0;
+        var first = bytes[cursor++];
+        if (first < 0x80)
+        {
+            codepoint = first;
+            return true;
+        }
+
+        var length = first switch
+        {
+            >= 0xc2 and <= 0xdf => 2,
+            >= 0xe0 and <= 0xef => 3,
+            >= 0xf0 and <= 0xf4 => 4,
+            _ => 0,
+        };
+        if (length == 0 || cursor + length - 1 > bytes.Length)
+        {
+            return false;
+        }
+
+        codepoint = first & ((1 << (7 - length)) - 1);
+        for (var i = 1; i < length; i++)
+        {
+            var next = bytes[cursor++];
+            if ((next & 0xc0) != 0x80)
+            {
+                return false;
+            }
+
+            codepoint = (codepoint << 6) | (next & 0x3f);
+        }
+
+        return true;
     }
 
     private byte[] ShrinkGlyph(byte[] source, int width, int height)

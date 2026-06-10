@@ -77,3 +77,21 @@ Backends:
 Gjallar is not a terminal multiplexer and not a dashboard theme. It is a
 multi-resolution text compositor. The important gap is that each pane can become
 its own virtual terminal scale while still belonging to one coherent display.
+
+## Raster Font Authority
+
+Gjallar owns TUI pixel typography for its framebuffer body. Eve GUI lowerers use
+outline display/body families such as Montserrat, Zen Kaku Gothic New, M PLUS 1,
+and Ubuntu Sans; those are not substitutes for Gjallar's raster cell fonts.
+
+For any scale Gjallar claims as Japanese-capable, the font must provide Latin,
+hiragana, and katakana in the same fixed cell grid. The target ladder is:
+
+- display: roughly 16px or larger;
+- body: roughly 12px;
+- small: roughly 10px.
+
+`PsfFont` reads Unicode-mapped PSF fonts and `FontAtlas` prefers
+kana-capable faces when hiragana or katakana appears in panel titles or body text. The
+asset line is still explicit: package or generate approved Unicode raster
+atlases for the 16/12/10 ladder before claiming full Japanese pixel parity.

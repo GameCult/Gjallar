@@ -92,8 +92,22 @@ Current internal organs:
 - `AabbPacker`: weighted region partitioning.
 - `EveNode`: retained surface tree projection.
 - `FrameDocument`: framebuffer drawing command surface.
-- `FontAtlas` / `PsfFont`: PSF font loading plus generated smaller fonts.
+- `FontAtlas` / `PsfFont`: Unicode-aware PSF raster font loading plus generated
+  smaller fonts.
 - `FramebufferDevice`: Linux `/dev/fb*` mapping or file-backed framebuffer.
+
+TUI typography is raster-first. Gjallar should not rely on GUI webfont stacks
+for pixel text. Any font scale advertised as Japanese-capable must provide
+Latin, hiragana, and katakana in the same fixed cell grid. The target raster ladder is:
+
+- display: roughly 16px or larger, for large labels and titles;
+- body: roughly 12px, for dense readable panel text;
+- small: roughly 10px, the smallest acceptable kana lane.
+
+Current code can read Unicode-mapped PSF fonts and will prefer kana-capable
+faces when a panel title or body contains kana. The remaining asset work is
+to package or generate approved 16/12/10 raster atlases; Latin-only console
+fonts are no longer a coherent answer for Japanese text.
 
 The next durable cut is to make the compositor model explicit:
 
