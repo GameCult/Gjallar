@@ -2339,6 +2339,7 @@ internal sealed class FontAtlas
         var candidates = new[]
         {
             primary,
+            "/usr/share/consolefonts/Unifont-APL8x16.psf.gz",
             "/usr/share/consolefonts/Lat2-Terminus12x6.psf.gz",
             "/usr/share/consolefonts/Lat7-Terminus12x6.psf.gz",
             "/usr/share/consolefonts/Lat2-Terminus14.psf.gz",
