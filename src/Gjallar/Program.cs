@@ -2399,8 +2399,7 @@ internal sealed class FontAtlas
         var source = loaded.OrderByDescending(font => font.SupportsKana).ThenBy(font => font.Width * font.Height).First();
         var generated = new[]
         {
-            source.ShrinkTo(6, 10),
-            source.ShrinkTo(7, 11),
+            source.ShrinkTo(8, 12),
             source,
         };
         return new FontAtlas(generated
@@ -2416,7 +2415,7 @@ internal sealed class FontAtlas
         var candidates = needsKana && fonts.Any(font => font.SupportsKana)
             ? fonts.Where(font => font.SupportsKana)
             : fonts;
-        var weightedPressure = Math.Clamp(weight / 4.0f, 0.0f, 5.0f);
+        var weightedPressure = Math.Clamp(weight / 6.0f, 0.0f, 2.5f);
         foreach (var font in candidates.OrderByDescending(font => font.Width * font.Height))
         {
             var columns = Math.Max(1, width / Math.Max(1, font.Width));
@@ -2435,7 +2434,7 @@ internal sealed class FontAtlas
 
     public PsfFont HeaderFor(int height, string text = "")
     {
-        var target = height < 40 ? Math.Max(3, height / 3) : Math.Max(10, Math.Min(24, height / 7));
+        var target = height < 40 ? Math.Max(4, height / 2) : Math.Max(10, Math.Min(24, height / 5));
         var candidates = ContainsKana(text) && fonts.Any(font => font.SupportsKana)
             ? fonts.Where(font => font.SupportsKana)
             : fonts;
@@ -2475,8 +2474,8 @@ internal sealed class PsfFont
     public int Width { get; }
     public int Height { get; }
     public int BytesPerRow { get; }
-    public int LineHeight => Height + (Height <= 5 ? 1 : 2);
-    public int BlockSpacing => Height <= 5 ? 0 : Math.Max(1, Height / 3);
+    public int LineHeight => Height + 1;
+    public int BlockSpacing => Height <= 5 ? 0 : 1;
 
     private PsfFont(int width, int height, byte[][] glyphs, IReadOnlyDictionary<int, int>? unicodeMap = null)
     {
