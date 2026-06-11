@@ -655,6 +655,14 @@ internal sealed class GjallarRenderer : IDisposable
             framebuffer = new { framebuffer.Width, framebuffer.Height, bytes = framebuffer.BufferBytes },
             refreshHz = config.RefreshHz,
             measuredFps = Math.Round(measuredFps, 2),
+            fonts = new
+            {
+                requestedPath = config.FontPath,
+                packagedKanaPath = Path.Combine(AppContext.BaseDirectory, "assets", "fonts", "GjallarKana8x16.psf"),
+                defaultFont = new { width = fonts.Default.Width, height = fonts.Default.Height, kana = fonts.Default.SupportsKana },
+                edgeFont = new { width = fonts.Edge.Width, height = fonts.Edge.Height, kana = fonts.Edge.SupportsKana },
+                loaded = fonts.Describe(),
+            },
             receive = new
             {
                 status = lastReceiveStatus,
@@ -2327,6 +2335,9 @@ internal sealed class FontAtlas
     public PsfFont Edge => fonts.FirstOrDefault(font => font.Height >= 14 && font.Width >= 8) ?? fonts.FirstOrDefault(font => font.Height >= 10 && font.Width >= 6) ?? fonts.FirstOrDefault(font => font.Height >= 5 && font.Width >= 3) ?? Default;
     public PsfFont this[int index] => fonts[Math.Clamp(index, 0, fonts.Length - 1)];
     public int IndexOf(PsfFont font) => Math.Max(0, Array.IndexOf(fonts, font));
+    public object[] Describe() => fonts
+        .Select(font => (object)new { width = font.Width, height = font.Height, kana = font.SupportsKana })
+        .ToArray();
 
     private FontAtlas(PsfFont[] fonts) => this.fonts = fonts
         .OrderBy(font => font.Width * font.Height)
@@ -2339,6 +2350,8 @@ internal sealed class FontAtlas
         var candidates = new[]
         {
             primary,
+            Path.Combine(AppContext.BaseDirectory, "assets", "fonts", "GjallarKana8x16.psf"),
+            Path.Combine(AppContext.BaseDirectory, "assets", "fonts", "Unifont-APL8x16.psf.gz"),
             "/usr/share/consolefonts/Unifont-APL8x16.psf.gz",
             "/usr/share/consolefonts/Lat2-Terminus12x6.psf.gz",
             "/usr/share/consolefonts/Lat7-Terminus12x6.psf.gz",
@@ -2359,6 +2372,10 @@ internal sealed class FontAtlas
             .GroupBy(font => (font.Width, font.Height))
             .Select(group => group.OrderByDescending(font => font.SupportsKana).First())
             .ToArray();
+        if (loaded.Any(font => font.SupportsKana))
+        {
+            loaded = loaded.Where(font => font.SupportsKana).ToArray();
+        }
         if (loaded.Length == 0)
         {
             throw new InvalidOperationException("No PSF console fonts found; pass --font.");
@@ -2473,7 +2490,11 @@ internal sealed class PsfFont
     }
 
     public bool Supports(char ch) => unicodeMap.ContainsKey(ch);
-    public bool SupportsKana => Supports('あ') && Supports('ん') && Supports('ア') && Supports('ン');
+    public bool SupportsKana =>
+        Supports('\u3042') &&
+        Supports('\u3093') &&
+        Supports('\u30A2') &&
+        Supports('\u30F3');
 
     public PsfFont ShrinkTo(int width, int height)
     {

@@ -11,4 +11,10 @@
   <ItemGroup>
     <ProjectReference Include="..\..\..\CultMath\src\CultMath\CultMath.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <Content Include="assets\fonts\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+  </ItemGroup>
 </Project>
