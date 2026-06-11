@@ -2347,10 +2347,14 @@ internal sealed class FontAtlas
 
     public static FontAtlas Load(string primary)
     {
-        var candidates = new[]
+        var packagedKanaPath = Path.Combine(AppContext.BaseDirectory, "assets", "fonts", "GjallarKana8x16.psf");
+        var preferredCandidates = new[]
         {
             primary,
-            Path.Combine(AppContext.BaseDirectory, "assets", "fonts", "GjallarKana8x16.psf"),
+            packagedKanaPath,
+        };
+        var fallbackCandidates = new[]
+        {
             Path.Combine(AppContext.BaseDirectory, "assets", "fonts", "Unifont-APL8x16.psf.gz"),
             "/usr/share/consolefonts/Unifont-APL8x16.psf.gz",
             "/usr/share/consolefonts/Lat2-Terminus12x6.psf.gz",
@@ -2366,12 +2370,23 @@ internal sealed class FontAtlas
             "/usr/share/consolefonts/Uni2-Terminus28x14.psf.gz",
             "/usr/share/consolefonts/Lat2-Terminus32x16.psf.gz",
         };
-        var loaded = candidates
+        var loaded = preferredCandidates
             .Where(path => !string.IsNullOrWhiteSpace(path) && File.Exists(path))
             .Select(PsfFont.Load)
             .GroupBy(font => (font.Width, font.Height))
             .Select(group => group.OrderByDescending(font => font.SupportsKana).First())
             .ToArray();
+
+        if (!loaded.Any(font => font.SupportsKana))
+        {
+            loaded = fallbackCandidates
+                .Where(path => !string.IsNullOrWhiteSpace(path) && File.Exists(path))
+                .Select(PsfFont.Load)
+                .GroupBy(font => (font.Width, font.Height))
+                .Select(group => group.OrderByDescending(font => font.SupportsKana).First())
+                .ToArray();
+        }
+
         if (loaded.Any(font => font.SupportsKana))
         {
             loaded = loaded.Where(font => font.SupportsKana).ToArray();
@@ -2384,16 +2399,14 @@ internal sealed class FontAtlas
         var source = loaded.OrderByDescending(font => font.SupportsKana).ThenBy(font => font.Width * font.Height).First();
         var generated = new[]
         {
-            source.ShrinkTo(3, 3),
-            source.ShrinkTo(3, 5),
-            source.ShrinkTo(4, 5),
-            source.ShrinkTo(4, 6),
-            source.ShrinkTo(5, 7),
-            source.ShrinkTo(6, 8),
             source.ShrinkTo(6, 10),
             source.ShrinkTo(7, 11),
+            source,
         };
-        return new FontAtlas(loaded.Concat(generated).GroupBy(font => (font.Width, font.Height)).Select(group => group.OrderByDescending(font => font.SupportsKana).First()).ToArray());
+        return new FontAtlas(generated
+            .GroupBy(font => (font.Width, font.Height))
+            .Select(group => group.OrderByDescending(font => font.SupportsKana).First())
+            .ToArray());
     }
 
     public PsfFont ForTextBox(int width, int height, IReadOnlyList<TextItem> items, float weight, out int index)
@@ -2574,7 +2587,7 @@ internal sealed class PsfFont
 
     private static IReadOnlyDictionary<int, int> ReadPsf1UnicodeMap(byte[] bytes, int offset, int glyphCount)
     {
-        var map = BuildIdentityMap(glyphCount).ToDictionary();
+        var map = new Dictionary<int, int>(glyphCount);
         var cursor = offset;
         for (var glyphIndex = 0; glyphIndex < glyphCount && cursor + 1 < bytes.Length; glyphIndex++)
         {
@@ -2605,7 +2618,7 @@ internal sealed class PsfFont
 
     private static IReadOnlyDictionary<int, int> ReadPsf2UnicodeMap(byte[] bytes, int offset, int glyphCount)
     {
-        var map = BuildIdentityMap(glyphCount).ToDictionary();
+        var map = new Dictionary<int, int>(glyphCount);
         var cursor = offset;
         for (var glyphIndex = 0; glyphIndex < glyphCount && cursor < bytes.Length; glyphIndex++)
         {
