@@ -24,7 +24,8 @@ internal sealed record GjallarConfig(
     int Width,
     int Height,
     string FontPath,
-    string MousePath)
+    string MousePath,
+    string SpecimenText)
 {
     public static GjallarConfig Parse(IReadOnlyList<string> args) => new(
         StringArg(args, "--fb", "/dev/fb0"),
@@ -38,7 +39,8 @@ internal sealed record GjallarConfig(
         IntArg(args, "--width", 0),
         IntArg(args, "--height", 0),
         StringArg(args, "--font", ""),
-        StringArg(args, "--mouse", "/dev/input/mice"));
+        StringArg(args, "--mouse", "/dev/input/mice"),
+        StringArg(args, "--specimen-text", ""));
 
     private static string StringArg(IReadOnlyList<string> args, string name, string fallback)
     {
@@ -104,6 +106,18 @@ internal sealed class GjallarRenderer : IDisposable
 
     public async Task RunAsync()
     {
+        if (!string.IsNullOrWhiteSpace(config.SpecimenText))
+        {
+            lastTimings = RenderSpecimen(config.SpecimenText);
+            if (!string.IsNullOrWhiteSpace(config.FrameDumpPath))
+            {
+                framebuffer.WritePpm(config.FrameDumpPath);
+            }
+
+            WriteStatus("specimen-rendered", 1, lastTimings.CopyMs + lastTimings.DecorMs + lastTimings.GutterMs + lastTimings.PresentMs, 0, lastTimings, DateTimeOffset.UtcNow);
+            return;
+        }
+
         var receiveTask = Task.Run(() => ConnectReceiveLoopAsync(stopping.Token));
         var inputTask = Task.Run(() => MouseInputLoopAsync(stopping.Token));
         var rendered = 0;
@@ -591,6 +605,36 @@ internal sealed class GjallarRenderer : IDisposable
         return new FrameTimings(copyMs, decorMs, gutterMs, presentMs);
     }
 
+    private FrameTimings RenderSpecimen(string specimenText)
+    {
+        var frame = new FrameDocument(framebuffer.Width, framebuffer.Height, fonts);
+        var started = Stopwatch.GetTimestamp();
+        frame.Clear(ColorBgra.Black);
+
+        var titleFont = fonts.Edge;
+        frame.DrawText(fonts.IndexOf(titleFont), 24, 24, "Gjallar Bitmap Specimen", new ColorBgra(255, 170, 90));
+
+        var sample = specimenText;
+        var baselineY = 70;
+        foreach (var font in fonts.All)
+        {
+            var index = fonts.IndexOf(font);
+            var header = $"{font.Width}x{font.Height}  kana:{(font.SupportsKana ? "yes" : "no")}";
+            frame.DrawText(index, 24, baselineY, header, new ColorBgra(255, 140, 80));
+            baselineY += font.LineHeight + 6;
+            frame.DrawText(index, 48, baselineY, sample, new ColorBgra(255, 255, 255));
+            baselineY += font.LineHeight + 4;
+            frame.DrawText(index, 48, baselineY, "VOIDBOT 0123456789 []{} <> /\\ +-=_", new ColorBgra(150, 220, 255));
+            baselineY += font.LineHeight + 20;
+        }
+
+        var presentStarted = Stopwatch.GetTimestamp();
+        framebuffer.Present(frame.Pixels);
+        var presentMs = ElapsedMilliseconds(presentStarted, Stopwatch.GetTimestamp());
+        frameIndex++;
+        return new FrameTimings(ElapsedMilliseconds(started, presentStarted), 0, 0, presentMs);
+    }
+
     private void WriteStatusIfDue(string status, int frames, double paintMs, FrameTimings timings, DateTimeOffset started)
     {
         var now = Stopwatch.GetTimestamp();
@@ -664,6 +708,8 @@ internal sealed class GjallarRenderer : IDisposable
                     Path.Combine(AppContext.BaseDirectory, "assets", "fonts", "ShinonomeGothic14.psf"),
                     Path.Combine(AppContext.BaseDirectory, "assets", "fonts", "ShinonomeGothic16.psf"),
                 },
+                specimenText = config.SpecimenText,
+                specimenSupport = string.IsNullOrWhiteSpace(config.SpecimenText) ? Array.Empty<object>() : fonts.DescribeSupport(config.SpecimenText),
                 defaultFont = new { width = fonts.Default.Width, height = fonts.Default.Height, kana = fonts.Default.SupportsKana },
                 edgeFont = new { width = fonts.Edge.Width, height = fonts.Edge.Height, kana = fonts.Edge.SupportsKana },
                 loaded = fonts.Describe(),
@@ -2336,12 +2382,21 @@ internal sealed class FramebufferDevice : IDisposable
 internal sealed class FontAtlas
 {
     private readonly PsfFont[] fonts;
+    public IReadOnlyList<PsfFont> All => fonts;
     public PsfFont Default => fonts[0];
     public PsfFont Edge => fonts.FirstOrDefault(font => font.Height >= 14 && font.Width >= 8) ?? fonts.FirstOrDefault(font => font.Height >= 10 && font.Width >= 6) ?? fonts.FirstOrDefault(font => font.Height >= 5 && font.Width >= 3) ?? Default;
     public PsfFont this[int index] => fonts[Math.Clamp(index, 0, fonts.Length - 1)];
     public int IndexOf(PsfFont font) => Math.Max(0, Array.IndexOf(fonts, font));
     public object[] Describe() => fonts
         .Select(font => (object)new { width = font.Width, height = font.Height, kana = font.SupportsKana })
+        .ToArray();
+    public object[] DescribeSupport(string text) => fonts
+        .Select(font => (object)new
+        {
+            width = font.Width,
+            height = font.Height,
+            missing = font.MissingCharacters(text),
+        })
         .ToArray();
 
     private FontAtlas(PsfFont[] fonts) => this.fonts = fonts
@@ -2504,6 +2559,11 @@ internal sealed class PsfFont
     }
 
     public bool Supports(char ch) => unicodeMap.ContainsKey(ch);
+    public string[] MissingCharacters(string text) => text
+        .Where(ch => !char.IsControl(ch) && !Supports(ch))
+        .Distinct()
+        .Select(ch => ch.ToString())
+        .ToArray();
     public bool SupportsKana =>
         Supports('\u3042') &&
         Supports('\u3093') &&
