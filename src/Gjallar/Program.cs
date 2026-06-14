@@ -81,6 +81,7 @@ internal sealed class GjallarRenderer : IDisposable
     private string lastProviderFetchUri = "";
     private SceneCache? sceneCache;
     private FrameTimings lastTimings;
+    private object[] lastPanelFontUsage = [];
     private readonly object interactionLock = new();
     private readonly HashSet<string> minimizedPanels = new(StringComparer.Ordinal);
     private IReadOnlyList<TitleHitRegion> latestTitleHits = [];
@@ -598,6 +599,8 @@ internal sealed class GjallarRenderer : IDisposable
             latestTitleHits = frame.TitleHitRegions.ToArray();
         }
 
+        lastPanelFontUsage = frame.PanelFontUsage(fonts);
+
         var presentStarted = Stopwatch.GetTimestamp();
         framebuffer.Present(frame.Pixels);
         presentMs = ElapsedMilliseconds(presentStarted, Stopwatch.GetTimestamp());
@@ -727,6 +730,7 @@ internal sealed class GjallarRenderer : IDisposable
             scene = new
             {
                 panels = sceneCache?.Panels.Count ?? 0,
+                panelFontUsage = lastPanelFontUsage,
                 minimizedPanels = minimizedCount,
                 minimizedTitles,
                 minimizedPlacement = "top-tabs",
@@ -1080,6 +1084,22 @@ internal sealed class FrameDocument
     }
 
     public void DrawText(int fontIndex, int x, int y, string text, ColorBgra color) => DrawText(fonts[fontIndex], x, y, text, color, Width - x);
+
+    public object[] PanelFontUsage(FontAtlas atlas) =>
+        Enumerable.Range(0, Math.Min(PanelCount, FontIndex.Length))
+            .GroupBy(index => FontIndex[index])
+            .OrderBy(group => group.Key)
+            .Select(group =>
+            {
+                var font = atlas[group.Key];
+                return (object)new
+                {
+                    width = font.Width,
+                    height = font.Height,
+                    panels = group.Count(),
+                };
+            })
+            .ToArray();
 
     public void DrawCursor(int x, int y, int frameIndex)
     {
