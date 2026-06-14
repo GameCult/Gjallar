@@ -658,7 +658,12 @@ internal sealed class GjallarRenderer : IDisposable
             fonts = new
             {
                 requestedPath = config.FontPath,
-                packagedKanaPath = Path.Combine(AppContext.BaseDirectory, "assets", "fonts", "GjallarKana8x16.psf"),
+                packagedFonts = new[]
+                {
+                    Path.Combine(AppContext.BaseDirectory, "assets", "fonts", "ShinonomeGothic12.psf"),
+                    Path.Combine(AppContext.BaseDirectory, "assets", "fonts", "ShinonomeGothic14.psf"),
+                    Path.Combine(AppContext.BaseDirectory, "assets", "fonts", "ShinonomeGothic16.psf"),
+                },
                 defaultFont = new { width = fonts.Default.Width, height = fonts.Default.Height, kana = fonts.Default.SupportsKana },
                 edgeFont = new { width = fonts.Edge.Width, height = fonts.Edge.Height, kana = fonts.Edge.SupportsKana },
                 loaded = fonts.Describe(),
@@ -2347,12 +2352,15 @@ internal sealed class FontAtlas
 
     public static FontAtlas Load(string primary)
     {
-        var packagedKanaPath = Path.Combine(AppContext.BaseDirectory, "assets", "fonts", "GjallarKana8x16.psf");
-        var preferredCandidates = new[]
+        var packagedCandidates = new[]
         {
-            primary,
-            packagedKanaPath,
+            Path.Combine(AppContext.BaseDirectory, "assets", "fonts", "ShinonomeGothic12.psf"),
+            Path.Combine(AppContext.BaseDirectory, "assets", "fonts", "ShinonomeGothic14.psf"),
+            Path.Combine(AppContext.BaseDirectory, "assets", "fonts", "ShinonomeGothic16.psf"),
         };
+        var preferredCandidates = string.IsNullOrWhiteSpace(primary)
+            ? packagedCandidates
+            : new[] { primary }.Concat(packagedCandidates).ToArray();
         var fallbackCandidates = new[]
         {
             Path.Combine(AppContext.BaseDirectory, "assets", "fonts", "Unifont-APL8x16.psf.gz"),
@@ -2396,13 +2404,7 @@ internal sealed class FontAtlas
             throw new InvalidOperationException("No PSF console fonts found; pass --font.");
         }
 
-        var source = loaded.OrderByDescending(font => font.SupportsKana).ThenBy(font => font.Width * font.Height).First();
-        var generated = new[]
-        {
-            source.ShrinkTo(8, 12),
-            source,
-        };
-        return new FontAtlas(generated
+        return new FontAtlas(loaded
             .GroupBy(font => (font.Width, font.Height))
             .Select(group => group.OrderByDescending(font => font.SupportsKana).First())
             .ToArray());
@@ -2415,7 +2417,7 @@ internal sealed class FontAtlas
         var candidates = needsKana && fonts.Any(font => font.SupportsKana)
             ? fonts.Where(font => font.SupportsKana)
             : fonts;
-        var weightedPressure = Math.Clamp(weight / 6.0f, 0.0f, 2.5f);
+        var weightedPressure = Math.Clamp(weight / 8.0f, 0.0f, 1.5f);
         foreach (var font in candidates.OrderByDescending(font => font.Width * font.Height))
         {
             var columns = Math.Max(1, width / Math.Max(1, font.Width));
@@ -2434,7 +2436,7 @@ internal sealed class FontAtlas
 
     public PsfFont HeaderFor(int height, string text = "")
     {
-        var target = height < 40 ? Math.Max(4, height / 2) : Math.Max(10, Math.Min(24, height / 5));
+        var target = height < 40 ? Math.Max(8, height / 2) : Math.Max(12, Math.Min(32, height / 4));
         var candidates = ContainsKana(text) && fonts.Any(font => font.SupportsKana)
             ? fonts.Where(font => font.SupportsKana)
             : fonts;
@@ -2507,17 +2509,6 @@ internal sealed class PsfFont
         Supports('\u3093') &&
         Supports('\u30A2') &&
         Supports('\u30F3');
-
-    public PsfFont ShrinkTo(int width, int height)
-    {
-        var shrunk = new byte[glyphs.Length][];
-        for (var glyphIndex = 0; glyphIndex < glyphs.Length; glyphIndex++)
-        {
-            shrunk[glyphIndex] = ShrinkGlyph(glyphs[glyphIndex], width, height);
-        }
-
-        return new PsfFont(width, height, shrunk, unicodeMap);
-    }
 
     public static PsfFont Load(string path)
     {
@@ -2685,50 +2676,4 @@ internal sealed class PsfFont
         return true;
     }
 
-    private byte[] ShrinkGlyph(byte[] source, int width, int height)
-    {
-        var bytesPerRow = (width + 7) / 8;
-        var target = new byte[height * bytesPerRow];
-        for (var y = 0; y < height; y++)
-        {
-            var sy0 = y * Height / height;
-            var sy1 = Math.Max(sy0 + 1, (y + 1) * Height / height);
-            for (var x = 0; x < width; x++)
-            {
-                var sx0 = x * Width / width;
-                var sx1 = Math.Max(sx0 + 1, (x + 1) * Width / width);
-                var lit = 0;
-                var total = 0;
-                for (var sy = sy0; sy < sy1; sy++)
-                {
-                    for (var sx = sx0; sx < sx1; sx++)
-                    {
-                        total++;
-                        if (IsSet(source, sx, sy))
-                        {
-                            lit++;
-                        }
-                    }
-                }
-
-                if (lit * 2 >= Math.Max(1, total))
-                {
-                    target[y * bytesPerRow + x / 8] |= (byte)(0x80 >> (x % 8));
-                }
-            }
-        }
-
-        return target;
-    }
-
-    private bool IsSet(byte[] glyph, int x, int y)
-    {
-        if ((uint)x >= (uint)Width || (uint)y >= (uint)Height)
-        {
-            return false;
-        }
-
-        var offset = y * BytesPerRow + x / 8;
-        return offset < glyph.Length && (glyph[offset] & (0x80 >> (x % 8))) != 0;
-    }
 }
