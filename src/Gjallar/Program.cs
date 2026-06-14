@@ -2401,6 +2401,13 @@ internal sealed class FramebufferDevice : IDisposable
 
 internal sealed class FontAtlas
 {
+    private static readonly (string FileName, int Width, int Height)[] PackagedFamily =
+    [
+        ("ShinonomeGothic12.psf", 12, 12),
+        ("ShinonomeGothic14.psf", 14, 14),
+        ("ShinonomeGothic16.psf", 16, 16),
+    ];
+
     private readonly PsfFont[] fonts;
     public IReadOnlyList<PsfFont> All => fonts;
     public PsfFont Default => fonts[0];
@@ -2427,61 +2434,60 @@ internal sealed class FontAtlas
 
     public static FontAtlas Load(string primary)
     {
-        var packagedCandidates = new[]
+        if (!string.IsNullOrWhiteSpace(primary))
         {
-            Path.Combine(AppContext.BaseDirectory, "assets", "fonts", "ShinonomeGothic12.psf"),
-            Path.Combine(AppContext.BaseDirectory, "assets", "fonts", "ShinonomeGothic14.psf"),
-            Path.Combine(AppContext.BaseDirectory, "assets", "fonts", "ShinonomeGothic16.psf"),
-        };
-        var preferredCandidates = string.IsNullOrWhiteSpace(primary)
-            ? packagedCandidates
-            : new[] { primary }.Concat(packagedCandidates).ToArray();
-        var fallbackCandidates = new[]
-        {
-            Path.Combine(AppContext.BaseDirectory, "assets", "fonts", "Unifont-APL8x16.psf.gz"),
-            "/usr/share/consolefonts/Unifont-APL8x16.psf.gz",
-            "/usr/share/consolefonts/Lat2-Terminus12x6.psf.gz",
-            "/usr/share/consolefonts/Lat7-Terminus12x6.psf.gz",
-            "/usr/share/consolefonts/Lat2-Terminus14.psf.gz",
-            "/usr/share/consolefonts/Uni2-Fixed14.psf.gz",
-            "/usr/share/consolefonts/Lat2-TerminusBoldVGA16.psf.gz",
-            "/usr/share/consolefonts/UbuntuMono-R-8x16.psf",
-            "/usr/share/consolefonts/Uni3-TerminusBold18x10.psf.gz",
-            "/usr/share/consolefonts/Lat7-Terminus20x10.psf.gz",
-            "/usr/share/consolefonts/Uni3-TerminusBold22x11.psf.gz",
-            "/usr/share/consolefonts/Lat2-Terminus24x12.psf.gz",
-            "/usr/share/consolefonts/Uni2-Terminus28x14.psf.gz",
-            "/usr/share/consolefonts/Lat2-Terminus32x16.psf.gz",
-        };
-        var loaded = preferredCandidates
-            .Where(path => !string.IsNullOrWhiteSpace(path) && File.Exists(path))
-            .Select(PsfFont.Load)
-            .GroupBy(font => (font.Width, font.Height))
-            .Select(group => group.OrderByDescending(font => font.SupportsKana).First())
+            if (!File.Exists(primary))
+            {
+                throw new InvalidOperationException($"Explicit font override not found: {primary}");
+            }
+
+            return new FontAtlas([PsfFont.Load(primary)]);
+        }
+
+        var packagedFonts = PackagedFamily
+            .Select(entry => new
+            {
+                entry.FileName,
+                entry.Width,
+                entry.Height,
+                Path = Path.Combine(AppContext.BaseDirectory, "assets", "fonts", entry.FileName),
+            })
             .ToArray();
 
-        if (!loaded.Any(font => font.SupportsKana))
+        var missing = packagedFonts
+            .Where(entry => !File.Exists(entry.Path))
+            .Select(entry => entry.FileName)
+            .ToArray();
+        if (missing.Length > 0)
         {
-            loaded = fallbackCandidates
-                .Where(path => !string.IsNullOrWhiteSpace(path) && File.Exists(path))
-                .Select(PsfFont.Load)
-                .GroupBy(font => (font.Width, font.Height))
-                .Select(group => group.OrderByDescending(font => font.SupportsKana).First())
-                .ToArray();
+            throw new InvalidOperationException($"Gjallar packaged bitmap family is incomplete. Missing: {string.Join(", ", missing)}");
         }
 
-        if (loaded.Any(font => font.SupportsKana))
+        var loaded = packagedFonts
+            .Select(entry => (Expected: entry, Font: PsfFont.Load(entry.Path)))
+            .ToArray();
+        var mismatched = loaded
+            .Where(item => item.Font.Width != item.Expected.Width || item.Font.Height != item.Expected.Height)
+            .Select(item => $"{item.Expected.FileName} expected {item.Expected.Width}x{item.Expected.Height} got {item.Font.Width}x{item.Font.Height}")
+            .ToArray();
+        if (mismatched.Length > 0)
         {
-            loaded = loaded.Where(font => font.SupportsKana).ToArray();
+            throw new InvalidOperationException($"Gjallar packaged bitmap family has size mismatches: {string.Join("; ", mismatched)}");
         }
-        if (loaded.Length == 0)
+
+        var nonKana = loaded
+            .Where(item => !item.Font.SupportsKana)
+            .Select(item => item.Expected.FileName)
+            .ToArray();
+        if (nonKana.Length > 0)
         {
-            throw new InvalidOperationException("No PSF console fonts found; pass --font.");
+            throw new InvalidOperationException($"Gjallar packaged bitmap family is missing kana coverage: {string.Join(", ", nonKana)}");
         }
 
         return new FontAtlas(loaded
+            .Select(item => item.Font)
             .GroupBy(font => (font.Width, font.Height))
-            .Select(group => group.OrderByDescending(font => font.SupportsKana).First())
+            .Select(group => group.Single())
             .ToArray());
     }
 
