@@ -1282,68 +1282,19 @@ internal sealed class FrameDocument
         }
 
         var objects = MarqueeQueue.FromTape(tape);
-        var cycleLength = objects.CycleWidth;
-        if (cycleLength <= 0)
+        if (objects.CycleWidth <= 0 || string.IsNullOrEmpty(objects.CycleText))
         {
             return characters;
         }
 
-        var scroll = (frameIndex / framesPerScrollCell) % cycleLength;
-        for (var itemIndex = 0; itemIndex < objects.Count; itemIndex++)
+        var scroll = (frameIndex / framesPerScrollCell) % objects.CycleWidth;
+        for (var address = 0; address < ribbon.Count; address++)
         {
-            var firstStart = PositiveMod(objects.Start[itemIndex] + scroll, cycleLength);
-            for (var pathStart = firstStart; pathStart < ribbon.Count; pathStart += cycleLength)
-            {
-                WriteMarqueeObject(characters, ribbon, objects, itemIndex, pathStart);
-            }
-
-            for (var pathStart = firstStart - cycleLength; pathStart > -objects.Width[itemIndex]; pathStart -= cycleLength)
-            {
-                WriteMarqueeObject(characters, ribbon, objects, itemIndex, pathStart);
-            }
+            var cycleIndex = PositiveMod(address - scroll, objects.CycleWidth);
+            characters[address] = objects.CycleText[cycleIndex];
         }
 
         return characters;
-    }
-
-    private static void WriteMarqueeObject(char[] characters, GutterRibbon ribbon, MarqueeQueue objects, int itemIndex, int pathStart)
-    {
-        var text = objects.Text[itemIndex];
-        var textIndex = 0;
-        var path = pathStart;
-        if (path < 0)
-        {
-            var skip = Math.Min(text.Length, -path);
-            textIndex += skip;
-            path += skip;
-        }
-
-        if (textIndex >= text.Length || path >= ribbon.Count)
-        {
-            return;
-        }
-
-        while (textIndex < text.Length && path < ribbon.Count)
-        {
-            var row = ribbon.Row[path];
-            var forward = ribbon.Forward[path];
-            var take = 0;
-            while (textIndex + take < text.Length && path + take < ribbon.Count && ribbon.Row[path + take] == row)
-            {
-                take++;
-            }
-
-            for (var index = 0; index < take; index++)
-            {
-                var sourceIndex = forward
-                    ? textIndex + index
-                    : textIndex + take - index - 1;
-                characters[path + index] = text[sourceIndex];
-            }
-
-            textIndex += take;
-            path += take;
-        }
     }
 
     private static int PositiveMod(int value, int modulus) =>
@@ -2112,6 +2063,7 @@ internal sealed class MarqueeQueue
         Width = width;
         Start = start;
         CycleWidth = width.Sum();
+        CycleText = string.Concat(text);
     }
 
     public int[] QueueIndex { get; }
@@ -2120,6 +2072,7 @@ internal sealed class MarqueeQueue
     public int[] Start { get; }
     public int Count => Text.Length;
     public int CycleWidth { get; }
+    public string CycleText { get; }
 
     public static MarqueeQueue FromTape(string tape)
     {
@@ -2197,13 +2150,7 @@ internal sealed class GutterRibbon
         var ordered = cells
             .GroupBy(static cell => cell.Row)
             .OrderBy(static group => group.Key)
-            .SelectMany(static group =>
-            {
-                var forward = group.First().Forward;
-                return forward
-                    ? group.OrderBy(static cell => cell.LaneColumn)
-                    : group.OrderByDescending(static cell => cell.LaneColumn);
-            })
+            .SelectMany(static group => group.OrderBy(static cell => cell.LaneColumn))
             .ToArray();
         var x = new int[ordered.Length];
         var y = new int[ordered.Length];
