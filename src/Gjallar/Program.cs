@@ -1323,20 +1323,26 @@ internal sealed class FrameDocument
             return;
         }
 
-        var row = ribbon.Row[path];
-        var forward = ribbon.Forward[path];
-        var take = 1;
-        while (textIndex + take < text.Length && path + take < ribbon.Count && ribbon.Row[path + take] == row)
+        while (textIndex < text.Length && path < ribbon.Count)
         {
-            take++;
-        }
+            var row = ribbon.Row[path];
+            var forward = ribbon.Forward[path];
+            var take = 0;
+            while (textIndex + take < text.Length && path + take < ribbon.Count && ribbon.Row[path + take] == row)
+            {
+                take++;
+            }
 
-        for (var index = 0; index < take; index++)
-        {
-            var sourceIndex = forward
-                ? textIndex + index
-                : textIndex + take - index - 1;
-            characters[path + index] = text[sourceIndex];
+            for (var index = 0; index < take; index++)
+            {
+                var sourceIndex = forward
+                    ? textIndex + index
+                    : textIndex + take - index - 1;
+                characters[path + index] = text[sourceIndex];
+            }
+
+            textIndex += take;
+            path += take;
         }
     }
 
