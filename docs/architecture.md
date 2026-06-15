@@ -87,11 +87,21 @@ and Ubuntu Sans; those are not substitutes for Gjallar's raster cell fonts.
 For any scale Gjallar claims as Japanese-capable, the font must provide Latin,
 hiragana, and katakana in the same fixed cell grid. The target ladder is:
 
-- display: roughly 16px or larger;
-- body: roughly 12px;
-- small: roughly 10px.
+- display: 16x16;
+- body: 14x14;
+- small: 12x12.
 
-`PsfFont` reads Unicode-mapped PSF fonts and `FontAtlas` prefers
-kana-capable faces when hiragana or katakana appears in panel titles or body text. The
-asset line is still explicit: package or generate approved Unicode raster
-atlases for the 16/12/10 ladder before claiming full Japanese pixel parity.
+`PsfFont` reads Unicode-mapped PSF fonts and `FontAtlas` selects from the
+packaged Shinonome bitmap family. Default startup now treats that family as a
+hard contract: if any required raster is missing, mis-sized, or missing kana,
+Gjallar fails loudly instead of falling back to random system console fonts.
+
+The repo-native verification path is:
+
+- `tools/verify_bitmap_family.ps1`
+
+That verifier builds Gjallar, runs specimen mode against a temp framebuffer, and
+proves the shipped 12/14/16 family loads with zero missing glyphs for a mixed
+Latin/hiragana/katakana specimen string including `メタめ`. The verifier uses
+`--specimen-text-file` so UTF-8 specimen content does not depend on shell
+argument encoding quirks.

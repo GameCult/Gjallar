@@ -40,7 +40,7 @@ internal sealed record GjallarConfig(
         IntArg(args, "--height", 0),
         StringArg(args, "--font", ""),
         StringArg(args, "--mouse", "/dev/input/mice"),
-        StringArg(args, "--specimen-text", ""));
+        ResolveSpecimenText(args));
 
     private static string StringArg(IReadOnlyList<string> args, string name, string fallback)
     {
@@ -57,6 +57,17 @@ internal sealed record GjallarConfig(
 
     private static int IntArg(IReadOnlyList<string> args, string name, int fallback) =>
         int.TryParse(StringArg(args, name, ""), NumberStyles.Integer, CultureInfo.InvariantCulture, out var value) ? value : fallback;
+
+    private static string ResolveSpecimenText(IReadOnlyList<string> args)
+    {
+        var file = StringArg(args, "--specimen-text-file", "");
+        if (!string.IsNullOrWhiteSpace(file))
+        {
+            return File.ReadAllText(file, Encoding.UTF8);
+        }
+
+        return StringArg(args, "--specimen-text", "");
+    }
 }
 
 internal sealed class GjallarRenderer : IDisposable
