@@ -6,6 +6,7 @@ using MessagePack;
 internal sealed class GjallarVerseRuntime : IDisposable
 {
     private static readonly CultRecordKey ProviderAdvertisementKey = new("provider:nightwing-gjallar");
+    private static readonly CultRecordKey SurfaceStateKey = new("surface:nightwing-gjallar");
     private static readonly CultRecordKey RuntimeConfigKey = new("gjallar:runtime-config");
     private static readonly CultRecordKey FrameStatusKey = new("gjallar:frame-status");
     private static readonly CultRecordKey CommandBoundaryKey = new("gjallar:command-boundary");
@@ -45,6 +46,7 @@ internal sealed class GjallarVerseRuntime : IDisposable
         lock (publishLock)
         {
             Put(BuildProviderAdvertisement(pulse), ProviderAdvertisementKey);
+            Put(BuildSurfaceState(pulse), SurfaceStateKey);
             Put(BuildRuntimeConfig(pulse), RuntimeConfigKey);
             Put(BuildFrameStatus(pulse), FrameStatusKey);
             Put(BuildCommandBoundary(pulse), CommandBoundaryKey);
@@ -76,6 +78,7 @@ internal sealed class GjallarVerseRuntime : IDisposable
             CapabilityIds =
             [
                 "framebuffer.composition",
+                "cultui-surface",
                 "daemon-health",
                 "cultcache-witness",
                 "operator.mouse-local",
@@ -93,6 +96,12 @@ internal sealed class GjallarVerseRuntime : IDisposable
                     SchemaId = "gamecult.eve.provider_advertisement.v1",
                     Owner = "gjallar.runtime",
                     Description = "Gjallar service identity, witness catalog, and display boundary projection.",
+                },
+                new GjallarAdvertisedSchema
+                {
+                    SchemaId = "gamecult.eve.surface_state.v1",
+                    Owner = "gjallar.runtime",
+                    Description = "Gjallar-owned operator surface describing the compositor body, transport debt, and live frame telemetry.",
                 },
                 new GjallarAdvertisedSchema
                 {
@@ -136,6 +145,7 @@ internal sealed class GjallarVerseRuntime : IDisposable
                     Schemas =
                     [
                         "gamecult.eve.provider_advertisement.v1",
+                        "gamecult.eve.surface_state.v1",
                         "gjallar.runtime_config.v0",
                         "gjallar.frame_status.v0",
                         "gjallar.command_boundary.v0",
@@ -148,13 +158,129 @@ internal sealed class GjallarVerseRuntime : IDisposable
             [
                 new GjallarAdvertisedSurface
                 {
-                    SurfaceId = "nightwing-gjallar.framebuffer",
+                    SurfaceId = "nightwing-gjallar",
                     Address = "asgard.nightwing.gjallar/framebuffer",
-                    Kind = "framebuffer",
+                    Kind = "dashboard",
                     Status = pulse.Status,
                     InputTransport = "compatibility.odin-websocket-deck",
                 },
             ],
+        };
+
+    private GjallarSurfaceStateRecord BuildSurfaceState(GjallarVersePulse pulse)
+    {
+        var updatedAt = pulse.ObservedAt.ToString("O", CultureInfo.InvariantCulture);
+        return new GjallarSurfaceStateRecord
+        {
+            RecordId = "surface:nightwing-gjallar",
+            ProviderId = "nightwing-gjallar",
+            Title = "Nightwing Gjallar",
+            Version = pulse.ObservedAt.ToUnixTimeMilliseconds(),
+            UpdatedAt = updatedAt,
+            Surface = new GjallarSurfaceDocument
+            {
+                Schema = "gamecult.eve.surface.v1",
+                Id = "nightwing-gjallar.surface",
+                Title = "Nightwing Gjallar",
+                Root = DashboardNode(
+                    "nightwing-gjallar-root",
+                    "Nightwing Gjallar",
+                    $"{pulse.CatalogProviders} catalog / {pulse.ComposedProviders} composed / {pulse.Panels} visible panels",
+                    pulse.Status,
+                    GroupNode(
+                        "nightwing-gjallar-frame",
+                        "Frame",
+                        MetricNode("nightwing-gjallar-status", "status", pulse.Status),
+                        MetricNode("nightwing-gjallar-fps", "fps", pulse.MeasuredFps.ToString("0.0", CultureInfo.InvariantCulture)),
+                        MetricNode("nightwing-gjallar-panels", "panels", pulse.Panels.ToString(CultureInfo.InvariantCulture)),
+                        MetricNode("nightwing-gjallar-catalog", "catalog", pulse.CatalogProviders.ToString(CultureInfo.InvariantCulture)),
+                        MetricNode("nightwing-gjallar-composed", "composed", pulse.ComposedProviders.ToString(CultureInfo.InvariantCulture))
+                    ),
+                    CardNode(
+                        "nightwing-gjallar-transport",
+                        "Transport",
+                        TextNode("nightwing-gjallar-input-transport", $"input: compatibility.odin-websocket-deck ({pulse.ReceiveStatus})"),
+                        TextNode("nightwing-gjallar-output-transport", "output: daemon-published-rudp-health + daemon-owned-cultcache-service-boundary"),
+                        TextNode("nightwing-gjallar-witness", $"witness: {config.CultCachePath}"),
+                        TextNode("nightwing-gjallar-status-path", $"status: {config.StatusPath}"),
+                        TextNode("nightwing-gjallar-health-endpoint", $"health: {config.IdunnRudpHealth}")
+                    ),
+                    CardNode(
+                        "nightwing-gjallar-cursor",
+                        "Cursor",
+                        TextNode("nightwing-gjallar-cursor-status", $"cursor: {pulse.CursorStatus}"),
+                        TextNode("nightwing-gjallar-cursor-position", $"position: {pulse.CursorX}, {pulse.CursorY}"),
+                        TextNode("nightwing-gjallar-last-click", $"last click: {pulse.LastClick}"),
+                        TextNode("nightwing-gjallar-cursor-error", string.IsNullOrWhiteSpace(pulse.CursorError) ? "cursor error: none" : $"cursor error: {pulse.CursorError}")
+                    ),
+                    CardNode(
+                        "nightwing-gjallar-scene",
+                        "Scene",
+                        TextNode("nightwing-gjallar-minimized", $"minimized: {pulse.MinimizedPanels}"),
+                        TextNode("nightwing-gjallar-title-hits", $"title hits: {pulse.TitleHitRegions}"),
+                        TextNode("nightwing-gjallar-gutters", $"gutter rows/cells: {pulse.GutterRows} / {pulse.GutterCells}"),
+                        TextNode("nightwing-gjallar-marquee", $"marquee chars: {pulse.MarqueeChars}"),
+                        TextNode("nightwing-gjallar-fetch", string.IsNullOrWhiteSpace(pulse.ProviderFetchError) ? "provider fetch: clean" : $"provider fetch: {pulse.ProviderFetchError}")
+                    )
+                ),
+                Assets = [],
+            },
+        };
+    }
+
+    private static GjallarSurfaceNode DashboardNode(string id, string title, string summary, string status, params GjallarSurfaceNode[] children) =>
+        new()
+        {
+            Id = id,
+            Kind = "dashboard",
+            Props = new GjallarSurfaceProps
+            {
+                Title = title,
+                Summary = summary,
+                Status = status,
+            },
+            Children = children,
+        };
+
+    private static GjallarSurfaceNode GroupNode(string id, string title, params GjallarSurfaceNode[] children) =>
+        new()
+        {
+            Id = id,
+            Kind = "group",
+            Props = new GjallarSurfaceProps { Title = title },
+            Children = children,
+        };
+
+    private static GjallarSurfaceNode CardNode(string id, string title, params GjallarSurfaceNode[] children) =>
+        new()
+        {
+            Id = id,
+            Kind = "card",
+            Props = new GjallarSurfaceProps { Title = title },
+            Children = children,
+        };
+
+    private static GjallarSurfaceNode MetricNode(string id, string label, string value) =>
+        new()
+        {
+            Id = id,
+            Kind = "metric",
+            Props = new GjallarSurfaceProps
+            {
+                Label = label,
+                Value = value,
+                Text = $"{label}: {value}",
+            },
+            Children = [],
+        };
+
+    private static GjallarSurfaceNode TextNode(string id, string text) =>
+        new()
+        {
+            Id = id,
+            Kind = "text",
+            Props = new GjallarSurfaceProps { Text = text },
+            Children = [],
         };
 
     private GjallarRuntimeConfigRecord BuildRuntimeConfig(GjallarVersePulse pulse) =>
@@ -432,6 +558,53 @@ internal sealed class GjallarTransportProfileRecord
     [Key(8)] public string StatusPath { get; set; } = string.Empty;
     [Key(9)] public string CurrentCutLine { get; set; } = string.Empty;
     [Key(10)] public string UpdatedAt { get; set; } = string.Empty;
+}
+
+[CultDocument("gamecult.eve.surface_state", "gamecult.eve.surface_state.v1")]
+[MessagePackObject(AllowPrivate = true)]
+internal sealed class GjallarSurfaceStateRecord
+{
+    [Key(0)]
+    [CultName]
+    public string RecordId { get; set; } = string.Empty;
+
+    [Key(1)] public string ProviderId { get; set; } = string.Empty;
+
+    [Key(2)] public string Title { get; set; } = string.Empty;
+    [Key(3)] public long Version { get; set; }
+    [Key(4)] public string UpdatedAt { get; set; } = string.Empty;
+    [Key(5)] public GjallarSurfaceDocument Surface { get; set; } = new();
+}
+
+[MessagePackObject(AllowPrivate = true)]
+internal sealed class GjallarSurfaceDocument
+{
+    [Key(0)] public string Schema { get; set; } = "gamecult.eve.surface.v1";
+    [Key(1)] public string Id { get; set; } = string.Empty;
+    [Key(2)] public string Title { get; set; } = string.Empty;
+    [Key(3)] public GjallarSurfaceNode Root { get; set; } = new();
+    [Key(4)] public object[] Assets { get; set; } = [];
+}
+
+[MessagePackObject(AllowPrivate = true)]
+internal sealed class GjallarSurfaceNode
+{
+    [Key(0)] public string Id { get; set; } = string.Empty;
+    [Key(1)] public string Kind { get; set; } = string.Empty;
+    [Key(2)] public GjallarSurfaceProps Props { get; set; } = new();
+    [Key(3)] public GjallarSurfaceNode[] Children { get; set; } = [];
+}
+
+[MessagePackObject(AllowPrivate = true)]
+internal sealed class GjallarSurfaceProps
+{
+    [Key(0)] public string Title { get; set; } = string.Empty;
+    [Key(1)] public string Text { get; set; } = string.Empty;
+    [Key(2)] public string Label { get; set; } = string.Empty;
+    [Key(3)] public string Value { get; set; } = string.Empty;
+    [Key(4)] public string Status { get; set; } = string.Empty;
+    [Key(5)] public string Summary { get; set; } = string.Empty;
+    [Key(6)] public string Detail { get; set; } = string.Empty;
 }
 
 [MessagePackObject(AllowPrivate = true)]
