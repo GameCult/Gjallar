@@ -792,6 +792,7 @@ internal sealed class GjallarRenderer : IDisposable
                 contract = config.IdunnHealthContract,
                 status = idunnRudpPublishStatus,
                 error = idunnRudpPublishError,
+                inFlight = idunnRudpPublishInFlight,
                 observedAtUtc = idunnRudpPublishObservedAt,
             },
             paintMs = Math.Round(paintMs, 2),
@@ -845,9 +846,12 @@ internal sealed class GjallarRenderer : IDisposable
             lastHealthPublishAttemptAt = observedAt;
             idunnRudpPublishEndpoint = config.IdunnRudpHealth;
             idunnRudpPublishObservedAt = health.ObservedAt;
-            idunnRudpPublishStatus = "publishing";
-            idunnRudpPublishError = "";
-        }
+            if (!string.Equals(idunnRudpPublishStatus, "published", StringComparison.Ordinal))
+            {
+                idunnRudpPublishStatus = "publishing";
+                idunnRudpPublishError = "";
+            }
+            }
 
         _ = Task.Run(() =>
         {
