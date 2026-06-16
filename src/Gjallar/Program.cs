@@ -2,11 +2,15 @@ using System.Buffers;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO.Compression;
+using System.Net;
+using System.Net.Sockets;
 using System.Net.WebSockets;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using CultMath;
+using GameCult.Networking;
+using MessagePack;
 
 var config = GjallarConfig.Parse(args);
 using var renderer = new GjallarRenderer(config);
@@ -25,7 +29,10 @@ internal sealed record GjallarConfig(
     int Height,
     string FontPath,
     string MousePath,
-    string SpecimenText)
+    string SpecimenText,
+    string IdunnRudpHealth,
+    string IdunnDaemon,
+    string IdunnHealthContract)
 {
     public static GjallarConfig Parse(IReadOnlyList<string> args) => new(
         StringArg(args, "--fb", "/dev/fb0"),
@@ -40,7 +47,10 @@ internal sealed record GjallarConfig(
         IntArg(args, "--height", 0),
         StringArg(args, "--font", ""),
         StringArg(args, "--mouse", "/dev/input/mice"),
-        ResolveSpecimenText(args));
+        ResolveSpecimenText(args),
+        StringArg(args, "--idunn-rudp-health", Environment.GetEnvironmentVariable("GJALLAR_IDUNN_RUDP_HEALTH") ?? ""),
+        StringArg(args, "--idunn-daemon", Environment.GetEnvironmentVariable("GJALLAR_IDUNN_DAEMON") ?? "nightwing-gjallar"),
+        StringArg(args, "--idunn-health-contract", Environment.GetEnvironmentVariable("GJALLAR_IDUNN_HEALTH_CONTRACT") ?? "gjallar.cultnet-rudp-framebuffer-composition-health"));
 
     private static string StringArg(IReadOnlyList<string> args, string name, string fallback)
     {
@@ -103,6 +113,13 @@ internal sealed class GjallarRenderer : IDisposable
     private string cursorStatus = "not-started";
     private string cursorError = "";
     private string lastClick = "";
+    private DateTimeOffset lastHealthPublishAttemptAt = DateTimeOffset.MinValue;
+    private string idunnRudpPublishStatus = "disabled";
+    private string idunnRudpPublishError = "";
+    private string idunnRudpPublishEndpoint = "";
+    private string idunnRudpPublishObservedAt = "";
+    private readonly object idunnRudpPublishLock = new();
+    private bool idunnRudpPublishInFlight;
 
     public GjallarRenderer(GjallarConfig config)
     {
@@ -702,6 +719,7 @@ internal sealed class GjallarRenderer : IDisposable
             : FrameDocument.VisibleGutterRows(sceneCache.GutterRibbon, frames, sceneCache.MarqueeTape)
                 .Select(static row => Sample(row, 160))
                 .ToArray();
+        QueueIdunnRudpHealthIfDue(status, frames, measuredFps, started);
         var document = new
         {
             schema = "gamecult.gjallar.frame.v1",
@@ -767,6 +785,15 @@ internal sealed class GjallarRenderer : IDisposable
                 lastClick = statusLastClick,
             },
             cultMathNative = Voronoi.NativeAvailable,
+            idunnRudpHealth = new
+            {
+                endpoint = idunnRudpPublishEndpoint,
+                daemon = config.IdunnDaemon,
+                contract = config.IdunnHealthContract,
+                status = idunnRudpPublishStatus,
+                error = idunnRudpPublishError,
+                observedAtUtc = idunnRudpPublishObservedAt,
+            },
             paintMs = Math.Round(paintMs, 2),
             timings = new
             {
@@ -778,6 +805,72 @@ internal sealed class GjallarRenderer : IDisposable
             updatedAtUtc = started.ToString("O", CultureInfo.InvariantCulture),
         };
         File.WriteAllText(config.StatusPath, JsonSerializer.Serialize(document, StatusJson), Encoding.UTF8);
+    }
+
+    private void QueueIdunnRudpHealthIfDue(string status, int frames, double measuredFps, DateTimeOffset observedAt)
+    {
+        if (string.IsNullOrWhiteSpace(config.IdunnRudpHealth))
+        {
+            idunnRudpPublishStatus = "disabled";
+            return;
+        }
+
+        if (lastHealthPublishAttemptAt != DateTimeOffset.MinValue &&
+            observedAt - lastHealthPublishAttemptAt < TimeSpan.FromSeconds(5))
+        {
+            return;
+        }
+
+        var state = string.Equals(status, "rendered", StringComparison.Ordinal) ? "healthy" : "active";
+        var detail = $"Gjallar framebuffer {status}; frames={frames}; catalogProviders={latestCatalogProviders}; composedProviders={latestComposedProviders}; fps={Math.Round(measuredFps, 2)}; receive={lastReceiveStatus}";
+        var health = new IdunnDaemonHealthRecord
+        {
+            DaemonId = config.IdunnDaemon,
+            State = state,
+            Detail = detail,
+            ObservedAt = observedAt.ToString("O", CultureInfo.InvariantCulture),
+            HealthContract = config.IdunnHealthContract,
+            PublicationSource = "daemon-published",
+            Transport = "cultnet.transport.rudp.v0",
+        };
+
+        lock (idunnRudpPublishLock)
+        {
+            if (idunnRudpPublishInFlight)
+            {
+                return;
+            }
+
+            idunnRudpPublishInFlight = true;
+            lastHealthPublishAttemptAt = observedAt;
+            idunnRudpPublishEndpoint = config.IdunnRudpHealth;
+            idunnRudpPublishObservedAt = health.ObservedAt;
+            idunnRudpPublishStatus = "publishing";
+            idunnRudpPublishError = "";
+        }
+
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                IdunnRudpHealthPublisher.Publish(config.IdunnRudpHealth, health);
+                lock (idunnRudpPublishLock)
+                {
+                    idunnRudpPublishStatus = "published";
+                    idunnRudpPublishError = "";
+                    idunnRudpPublishInFlight = false;
+                }
+            }
+            catch (Exception error)
+            {
+                lock (idunnRudpPublishLock)
+                {
+                    idunnRudpPublishStatus = "publish-error";
+                    idunnRudpPublishError = error.Message;
+                    idunnRudpPublishInFlight = false;
+                }
+            }
+        });
     }
 
     private static ColorBgra ToBgra(Color32 color) => new(color.r, color.g, color.b);
@@ -2200,6 +2293,90 @@ internal sealed class ToneBatch(int resolutionY, int frameIndex)
             frameIndex,
             nativeColors);
         return nativeColors.Select(color => new ColorBgra(color.r, color.g, color.b)).ToArray();
+    }
+}
+
+[MessagePackObject(AllowPrivate = true)]
+internal sealed class IdunnDaemonHealthRecord
+{
+    [Key(0)] public string DaemonId { get; set; } = "nightwing-gjallar";
+    [Key(1)] public string State { get; set; } = "active";
+    [Key(2)] public string Detail { get; set; } = "";
+    [Key(3)] public string ObservedAt { get; set; } = "";
+    [Key(4)] public string HealthContract { get; set; } = "gjallar.cultnet-rudp-framebuffer-composition-health";
+    [Key(5)] public string PublicationSource { get; set; } = "daemon-published";
+    [Key(6)] public string Transport { get; set; } = "cultnet.transport.rudp.v0";
+}
+
+internal static class IdunnRudpHealthPublisher
+{
+    private const uint ConnectionId = 0x1d0d0001;
+
+    public static void Publish(string endpoint, IdunnDaemonHealthRecord health)
+    {
+        var remote = ParseEndpoint(endpoint);
+        using var socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+        socket.Bind(new IPEndPoint(IPAddress.Any, 0));
+        socket.ReceiveTimeout = 100;
+        using var transport = new CultNetRudpSocketTransportConnection(new CultNetRudpSocketTransportOptions
+        {
+            RuntimeId = "gjallar",
+            Socket = socket,
+            Mode = CultNetRudpSocketMode.Client,
+            RemoteEndPoint = remote,
+            ConnectionId = ConnectionId,
+            InitialSequence = 1,
+            ResendDelayMs = 100,
+        });
+
+        if (!transport.ConnectAndWait(Array.Empty<byte>(), TimeSpan.FromSeconds(2), TimeSpan.FromMilliseconds(20)))
+        {
+            throw new TimeoutException($"timed out connecting Gjallar RUDP health publisher to {endpoint}");
+        }
+
+        var observedAt = string.IsNullOrWhiteSpace(health.ObservedAt)
+            ? DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture)
+            : health.ObservedAt;
+        health.ObservedAt = observedAt;
+        var message = new CultNetDocumentPutRawMessage
+        {
+            MessageId = $"gjallar-health:{health.DaemonId}:{observedAt.Replace(':', '-')}",
+            Document = new CultNetRawDocumentRecord
+            {
+                SchemaId = "idunn.daemon_health",
+                RecordKey = health.DaemonId,
+                StoredAt = observedAt,
+                PayloadEncoding = "messagepack",
+                Payload = MessagePackSerializer.Serialize(health, CultNetSchemaMessageSerialization.Options),
+                SourceRuntimeId = "gjallar",
+                SourceRole = "daemon-health-publisher",
+                Tags = ["cultnet.transport.rudp.v0"],
+            },
+        };
+        transport.SendSchema(CultNetSchemaMessageSerialization.Serialize(message));
+    }
+
+    private static IPEndPoint ParseEndpoint(string value)
+    {
+        var trimmed = value.Trim();
+        var separator = trimmed.LastIndexOf(':');
+        if (separator <= 0 || separator == trimmed.Length - 1)
+        {
+            throw new ArgumentException($"Idunn RUDP endpoint must be host:port, got '{value}'.", nameof(value));
+        }
+
+        var host = trimmed[..separator].Trim('[', ']');
+        var portText = trimmed[(separator + 1)..];
+        if (!int.TryParse(portText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var port) ||
+            port <= 0 || port > 65535)
+        {
+            throw new ArgumentException($"Idunn RUDP endpoint port is invalid: {portText}", nameof(value));
+        }
+
+        var addresses = Dns.GetHostAddresses(host);
+        var address = addresses.FirstOrDefault(static candidate => candidate.AddressFamily == AddressFamily.InterNetwork) ??
+            throw new ArgumentException($"Idunn RUDP endpoint host has no IPv4 address: {host}", nameof(value));
+        return new IPEndPoint(address, port);
     }
 }
 
