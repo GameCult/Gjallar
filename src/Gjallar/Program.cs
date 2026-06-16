@@ -869,7 +869,10 @@ internal sealed class GjallarRenderer : IDisposable
             {
                 lock (idunnRudpPublishLock)
                 {
-                    idunnRudpPublishStatus = "publish-error";
+                    if (!string.Equals(idunnRudpPublishStatus, "published", StringComparison.Ordinal))
+                    {
+                        idunnRudpPublishStatus = "publish-error";
+                    }
                     idunnRudpPublishError = error.Message;
                     idunnRudpPublishInFlight = false;
                 }
@@ -2333,7 +2336,7 @@ internal static class IdunnRudpHealthPublisher
             ResendDelayMs = 100,
         });
 
-        if (!transport.ConnectAndWait(Array.Empty<byte>(), TimeSpan.FromSeconds(2), TimeSpan.FromMilliseconds(20)))
+        if (!transport.ConnectAndWait(Array.Empty<byte>(), TimeSpan.FromSeconds(5), TimeSpan.FromMilliseconds(20)))
         {
             throw new TimeoutException($"timed out connecting Gjallar RUDP health publisher to {endpoint}");
         }
