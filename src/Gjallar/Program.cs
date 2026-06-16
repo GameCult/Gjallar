@@ -9,6 +9,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using CultMath;
+using GameCult.Caching;
 using GameCult.Networking;
 using MessagePack;
 
@@ -30,6 +31,7 @@ internal sealed record GjallarConfig(
     string FontPath,
     string MousePath,
     string SpecimenText,
+    string CultCachePath,
     string IdunnRudpHealth,
     string IdunnDaemon,
     string IdunnHealthContract)
@@ -48,6 +50,7 @@ internal sealed record GjallarConfig(
         StringArg(args, "--font", ""),
         StringArg(args, "--mouse", "/dev/input/mice"),
         ResolveSpecimenText(args),
+        StringArg(args, "--cultcache-path", Environment.GetEnvironmentVariable("GJALLAR_CULTCACHE_PATH") ?? ""),
         StringArg(args, "--idunn-rudp-health", Environment.GetEnvironmentVariable("GJALLAR_IDUNN_RUDP_HEALTH") ?? ""),
         StringArg(args, "--idunn-daemon", Environment.GetEnvironmentVariable("GJALLAR_IDUNN_DAEMON") ?? "nightwing-gjallar"),
         StringArg(args, "--idunn-health-contract", Environment.GetEnvironmentVariable("GJALLAR_IDUNN_HEALTH_CONTRACT") ?? "gjallar.cultnet-rudp-framebuffer-composition-health"));
@@ -120,6 +123,10 @@ internal sealed class GjallarRenderer : IDisposable
     private string idunnRudpPublishObservedAt = "";
     private readonly object idunnRudpPublishLock = new();
     private bool idunnRudpPublishInFlight;
+    private readonly GjallarVerseRuntime? verseRuntime;
+    private string cultCachePublishStatus = "disabled";
+    private string cultCachePublishError = "";
+    private string cultCachePublishObservedAt = "";
 
     public GjallarRenderer(GjallarConfig config)
     {
@@ -131,6 +138,11 @@ internal sealed class GjallarRenderer : IDisposable
         lastStatusTick = Stopwatch.GetTimestamp();
         cursorX = framebuffer.Width / 2;
         cursorY = framebuffer.Height / 2;
+        if (!string.IsNullOrWhiteSpace(config.CultCachePath))
+        {
+            verseRuntime = GjallarVerseRuntime.Create(config);
+            cultCachePublishStatus = "ready";
+        }
     }
 
     public async Task RunAsync()
@@ -686,11 +698,6 @@ internal sealed class GjallarRenderer : IDisposable
 
     private void WriteStatus(string status, int frames, double paintMs, double measuredFps, FrameTimings timings, DateTimeOffset started)
     {
-        if (string.IsNullOrWhiteSpace(config.StatusPath))
-        {
-            return;
-        }
-
         string[] minimizedTitles;
         int minimizedCount;
         int titleHitRegionCount;
@@ -720,6 +727,23 @@ internal sealed class GjallarRenderer : IDisposable
                 .Select(static row => Sample(row, 160))
                 .ToArray();
         QueueIdunnRudpHealthIfDue(status, frames, measuredFps, started);
+        PublishVerseWitness(
+            status,
+            frames,
+            paintMs,
+            measuredFps,
+            timings,
+            started,
+            minimizedTitles,
+            minimizedCount,
+            titleHitRegionCount,
+            statusCursorX,
+            statusCursorY,
+            statusCursorActive,
+            statusCursorStatus,
+            statusCursorError,
+            statusLastClick,
+            visibleMarqueeRows);
         var document = new
         {
             schema = "gamecult.gjallar.frame.v1",
@@ -795,6 +819,13 @@ internal sealed class GjallarRenderer : IDisposable
                 inFlight = idunnRudpPublishInFlight,
                 observedAtUtc = idunnRudpPublishObservedAt,
             },
+            cultCacheWitness = new
+            {
+                path = config.CultCachePath,
+                status = cultCachePublishStatus,
+                error = cultCachePublishError,
+                observedAtUtc = cultCachePublishObservedAt,
+            },
             paintMs = Math.Round(paintMs, 2),
             timings = new
             {
@@ -805,7 +836,105 @@ internal sealed class GjallarRenderer : IDisposable
             },
             updatedAtUtc = started.ToString("O", CultureInfo.InvariantCulture),
         };
-        File.WriteAllText(config.StatusPath, JsonSerializer.Serialize(document, StatusJson), Encoding.UTF8);
+        if (!string.IsNullOrWhiteSpace(config.StatusPath))
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(config.StatusPath) ?? ".");
+            File.WriteAllText(config.StatusPath, JsonSerializer.Serialize(document, StatusJson), Encoding.UTF8);
+        }
+    }
+
+    private void PublishVerseWitness(
+        string status,
+        int frames,
+        double paintMs,
+        double measuredFps,
+        FrameTimings timings,
+        DateTimeOffset started,
+        string[] minimizedTitles,
+        int minimizedCount,
+        int titleHitRegionCount,
+        int statusCursorX,
+        int statusCursorY,
+        bool statusCursorActive,
+        string statusCursorStatus,
+        string statusCursorError,
+        string statusLastClick,
+        string[] visibleMarqueeRows)
+    {
+        if (verseRuntime is null)
+        {
+            return;
+        }
+
+        var pulse = new GjallarVersePulse
+        {
+            Status = status,
+            Frames = frames,
+            PaintMs = paintMs,
+            MeasuredFps = measuredFps,
+            Timings = timings,
+            ObservedAt = started,
+            ReceiveStatus = lastReceiveStatus,
+            ReceiveError = lastReceiveError,
+            ProviderFetchError = lastProviderFetchError,
+            ProviderFetchUri = lastProviderFetchUri,
+            CatalogProviders = latestCatalogProviders,
+            ComposedProviders = latestComposedProviders,
+            StateBytes = Volatile.Read(ref latestStateJson)?.Length ?? 0,
+            Panels = sceneCache?.Panels.Count ?? 0,
+            PanelFontUsage = lastPanelFontUsage,
+            MinimizedPanels = minimizedCount,
+            MinimizedTitles = minimizedTitles,
+            TitleHitRegions = titleHitRegionCount,
+            GutterCells = sceneCache?.GutterRibbon.Count ?? 0,
+            GutterRows = sceneCache?.GutterRibbon.Row.Distinct().Count() ?? 0,
+            MarqueeChars = sceneCache?.MarqueeTape.Length ?? 0,
+            MarqueeSample = Sample(sceneCache?.MarqueeTape ?? "", 160),
+            VisibleMarqueeRows = visibleMarqueeRows,
+            VisibleMarqueeHasStonks = visibleMarqueeRows.Any(static row => row.Contains('$') || row.Contains("BITCOIN", StringComparison.OrdinalIgnoreCase) || row.Contains("DOGECOIN", StringComparison.OrdinalIgnoreCase) || row.Contains("ETHEREUM", StringComparison.OrdinalIgnoreCase)),
+            CursorStatus = statusCursorStatus,
+            CursorError = statusCursorError,
+            CursorActive = statusCursorActive,
+            CursorX = statusCursorX,
+            CursorY = statusCursorY,
+            LastClick = statusLastClick,
+            CultMathNative = Voronoi.NativeAvailable,
+            IdunnHealth = BuildIdunnDaemonHealthRecord(status, frames, measuredFps, started),
+        };
+
+        try
+        {
+            verseRuntime.Publish(pulse);
+            cultCachePublishStatus = "published";
+            cultCachePublishError = "";
+            cultCachePublishObservedAt = started.ToString("O", CultureInfo.InvariantCulture);
+        }
+        catch (Exception error)
+        {
+            cultCachePublishStatus = "publish-error";
+            cultCachePublishError = error.Message;
+            cultCachePublishObservedAt = started.ToString("O", CultureInfo.InvariantCulture);
+        }
+    }
+
+    private IdunnDaemonHealthRecord BuildIdunnDaemonHealthRecord(
+        string status,
+        int frames,
+        double measuredFps,
+        DateTimeOffset observedAt)
+    {
+        var state = string.Equals(status, "rendered", StringComparison.Ordinal) ? "healthy" : "active";
+        var detail = $"Gjallar framebuffer {status}; frames={frames}; catalogProviders={latestCatalogProviders}; composedProviders={latestComposedProviders}; fps={Math.Round(measuredFps, 2)}; receive={lastReceiveStatus}";
+        return new IdunnDaemonHealthRecord
+        {
+            DaemonId = config.IdunnDaemon,
+            State = state,
+            Detail = detail,
+            ObservedAt = observedAt.ToString("O", CultureInfo.InvariantCulture),
+            HealthContract = config.IdunnHealthContract,
+            PublicationSource = "daemon-published",
+            Transport = "cultnet.transport.rudp.v0",
+        };
     }
 
     private void QueueIdunnRudpHealthIfDue(string status, int frames, double measuredFps, DateTimeOffset observedAt)
@@ -822,18 +951,7 @@ internal sealed class GjallarRenderer : IDisposable
             return;
         }
 
-        var state = string.Equals(status, "rendered", StringComparison.Ordinal) ? "healthy" : "active";
-        var detail = $"Gjallar framebuffer {status}; frames={frames}; catalogProviders={latestCatalogProviders}; composedProviders={latestComposedProviders}; fps={Math.Round(measuredFps, 2)}; receive={lastReceiveStatus}";
-        var health = new IdunnDaemonHealthRecord
-        {
-            DaemonId = config.IdunnDaemon,
-            State = state,
-            Detail = detail,
-            ObservedAt = observedAt.ToString("O", CultureInfo.InvariantCulture),
-            HealthContract = config.IdunnHealthContract,
-            PublicationSource = "daemon-published",
-            Transport = "cultnet.transport.rudp.v0",
-        };
+        var health = BuildIdunnDaemonHealthRecord(status, frames, measuredFps, observedAt);
 
         lock (idunnRudpPublishLock)
         {
@@ -935,6 +1053,7 @@ internal sealed class GjallarRenderer : IDisposable
         stopping.Cancel();
         stopping.Dispose();
         timer.Dispose();
+        verseRuntime?.Dispose();
         framebuffer.Dispose();
     }
 }
@@ -2303,6 +2422,7 @@ internal sealed class ToneBatch(int resolutionY, int frameIndex)
     }
 }
 
+[CultDocument("idunn.daemon_health", "idunn.daemon_health.v1")]
 [MessagePackObject(AllowPrivate = true)]
 internal sealed class IdunnDaemonHealthRecord
 {
