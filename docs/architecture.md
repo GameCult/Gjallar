@@ -14,7 +14,7 @@ regions may use different text resolutions.
   and minimized/restored panel state.
 - Inputs: provider catalogs, provider-owned surface trees, display dimensions,
   font assets, runtime flags, mouse input, Odin's canonical slash-delimited
-  marquee tape, and eventually direct CultMesh subscriptions.
+  marquee tape, and Odin's accepted provider-state snapshot over CultNet/RUDP.
 - Outputs: `gjallar.overview` composition state, visible framebuffer frames,
   cursor presentation, top-tab minimized panel presentation, and renderer
   telemetry.
@@ -36,9 +36,9 @@ regions may use different text resolutions.
 ## Current Pipeline
 
 ```text
-Odin provider catalog
+Odin accepted provider-state snapshot over CultNet/RUDP
   -> display provider selection
-  -> provider surface fetch
+  -> provider surface extraction
   -> canonical marquee tape passthrough
   -> synthetic gjallar.overview surface
   -> EveNode panel extraction

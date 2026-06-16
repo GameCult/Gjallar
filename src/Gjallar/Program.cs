@@ -20,6 +20,7 @@ await renderer.RunAsync();
 internal sealed record GjallarConfig(
     string FramebufferPath,
     string Url,
+    string OdinCultNetRudpEndpoint,
     string ProviderId,
     int RefreshHz,
     int CatalogRefreshSeconds,
@@ -39,6 +40,7 @@ internal sealed record GjallarConfig(
     public static GjallarConfig Parse(IReadOnlyList<string> args) => new(
         StringArg(args, "--fb", "/dev/fb0"),
         StringArg(args, "--url", "ws://192.168.1.66:8797/eve/deck"),
+        StringArg(args, "--odin-cultnet-rudp", Environment.GetEnvironmentVariable("GJALLAR_ODIN_CULTNET_RUDP") ?? ""),
         StringArg(args, "--provider", ""),
         IntArg(args, "--refresh-hz", 2),
         IntArg(args, "--catalog-refresh-seconds", 5),
@@ -54,6 +56,14 @@ internal sealed record GjallarConfig(
         StringArg(args, "--idunn-rudp-health", Environment.GetEnvironmentVariable("GJALLAR_IDUNN_RUDP_HEALTH") ?? ""),
         StringArg(args, "--idunn-daemon", Environment.GetEnvironmentVariable("GJALLAR_IDUNN_DAEMON") ?? "nightwing-gjallar"),
         StringArg(args, "--idunn-health-contract", Environment.GetEnvironmentVariable("GJALLAR_IDUNN_HEALTH_CONTRACT") ?? "gjallar.cultnet-rudp-framebuffer-composition-health"));
+
+    public bool UsesOdinCultNetRudp =>
+        !string.IsNullOrWhiteSpace(OdinCultNetRudpEndpoint);
+
+    public string InputTransportId =>
+        UsesOdinCultNetRudp
+            ? "cultnet.rudp.odin-snapshot"
+            : "compatibility.odin-websocket-deck";
 
     private static string StringArg(IReadOnlyList<string> args, string name, string fallback)
     {
@@ -85,6 +95,7 @@ internal sealed record GjallarConfig(
 
 internal sealed class GjallarRenderer : IDisposable
 {
+    private const uint OdinCultNetRudpConnectionId = 0x0d1d0002;
     private static readonly JsonSerializerOptions StatusJson = new() { WriteIndented = true };
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
     private readonly GjallarConfig config;
@@ -313,6 +324,12 @@ internal sealed class GjallarRenderer : IDisposable
 
     private async Task ConnectReceiveLoopAsync(CancellationToken token)
     {
+        if (config.UsesOdinCultNetRudp)
+        {
+            await ConnectCultNetSnapshotLoopAsync(token).ConfigureAwait(false);
+            return;
+        }
+
         if (string.IsNullOrWhiteSpace(config.ProviderId))
         {
             await ConnectCatalogReceiveLoopAsync(token).ConfigureAwait(false);
@@ -337,6 +354,66 @@ internal sealed class GjallarRenderer : IDisposable
             catch (Exception error) when (!token.IsCancellationRequested)
             {
                 lastReceiveStatus = $"connect-error:{config.ProviderId}";
+                lastReceiveError = error.Message;
+                await Task.Delay(TimeSpan.FromSeconds(2), token).ConfigureAwait(false);
+            }
+        }
+    }
+
+    private async Task ConnectCultNetSnapshotLoopAsync(CancellationToken token)
+    {
+        while (!token.IsCancellationRequested)
+        {
+            try
+            {
+                var remote = ParseEndpoint(config.OdinCultNetRudpEndpoint, "--odin-cultnet-rudp");
+                using var socket = new Socket(remote.AddressFamily, SocketType.Dgram, ProtocolType.Udp);
+                socket.Bind(new IPEndPoint(
+                    remote.AddressFamily == AddressFamily.InterNetworkV6 ? IPAddress.IPv6Any : IPAddress.Any,
+                    0));
+                socket.ReceiveTimeout = 50;
+
+                using var transport = new CultNetRudpSocketTransportConnection(new CultNetRudpSocketTransportOptions
+                {
+                    RuntimeId = "gjallar",
+                    Socket = socket,
+                    Mode = CultNetRudpSocketMode.Client,
+                    RemoteEndPoint = remote,
+                    ConnectionId = OdinCultNetRudpConnectionId,
+                    InitialSequence = 1,
+                    ResendDelayMs = 100,
+                });
+
+                if (!transport.ConnectAndWait(Array.Empty<byte>(), TimeSpan.FromSeconds(5), TimeSpan.FromMilliseconds(20)))
+                {
+                    throw new TimeoutException($"timed out connecting Gjallar CultNet/RUDP input to {config.OdinCultNetRudpEndpoint}");
+                }
+
+                lastReceiveError = "";
+                lastProviderFetchError = "";
+                lastProviderFetchUri = $"cultnet-rudp://{config.OdinCultNetRudpEndpoint}#surface:gamecult.network.status";
+
+                while (!token.IsCancellationRequested)
+                {
+                    var (catalog, frames) = ReadCultNetSnapshot(transport);
+                    latestCatalogProviders = catalog.Providers.Count;
+                    latestComposedProviders = frames.Count;
+                    Interlocked.Exchange(ref latestStateJson, BuildGjallarSurface(catalog, frames));
+                    lastReceiveStatus = "catalog-composed";
+                    lastReceiveError = "";
+                    lastProviderFetchError = "";
+
+                    await Task.Delay(TimeSpan.FromSeconds(Math.Max(1, config.CatalogRefreshSeconds)), token)
+                        .ConfigureAwait(false);
+                }
+            }
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception error) when (!token.IsCancellationRequested)
+            {
+                lastReceiveStatus = "catalog-error";
                 lastReceiveError = error.Message;
                 await Task.Delay(TimeSpan.FromSeconds(2), token).ConfigureAwait(false);
             }
@@ -382,6 +459,126 @@ internal sealed class GjallarRenderer : IDisposable
         using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
         var json = await client.GetStringAsync(ProviderCatalogUri(), token).ConfigureAwait(false);
         return JsonSerializer.Deserialize<ProviderCatalog>(json, JsonOptions) ?? new ProviderCatalog([]);
+    }
+
+    private (ProviderCatalog Catalog, List<ProviderFrame> Frames) ReadCultNetSnapshot(
+        CultNetRudpSocketTransportConnection transport)
+    {
+        var messageId = $"gjallar-odin-snapshot:{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}";
+        transport.SendSchemaMessage(new CultNetSnapshotRequestMessage
+        {
+            MessageId = messageId,
+            SchemaIds = ["gamecult.eve.surface_state.v1"],
+            RecordKeys = ["surface:gamecult.network.status"],
+        });
+
+        var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(5);
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            var message = transport.ReceiveSchemaMessage(TimeSpan.FromMilliseconds(250), TimeSpan.FromMilliseconds(10));
+            switch (message)
+            {
+                case null:
+                    continue;
+                case CultNetErrorMessage error:
+                    throw new InvalidOperationException(error.Error);
+                case CultNetSnapshotResponseRawMessage response when string.Equals(response.MessageId, messageId, StringComparison.Ordinal):
+                    return BuildProviderFramesFromOdinState(response);
+            }
+        }
+
+        throw new TimeoutException($"timed out waiting for Odin CultNet/RUDP snapshot from {config.OdinCultNetRudpEndpoint}");
+    }
+
+    private static (ProviderCatalog Catalog, List<ProviderFrame> Frames) BuildProviderFramesFromOdinState(
+        CultNetSnapshotResponseRawMessage response)
+    {
+        var document = response.Documents.FirstOrDefault(candidate =>
+            string.Equals(candidate.SchemaId, "gamecult.eve.surface_state.v1", StringComparison.Ordinal) &&
+            string.Equals(candidate.RecordKey, "surface:gamecult.network.status", StringComparison.Ordinal))
+            ?? response.Documents.FirstOrDefault(candidate =>
+                string.Equals(candidate.SchemaId, "gamecult.eve.surface_state.v1", StringComparison.Ordinal))
+            ?? throw new InvalidOperationException("Odin CultNet/RUDP snapshot did not include gamecult.eve.surface_state.v1.");
+
+        if (!string.Equals(document.PayloadEncoding, "messagepack", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException($"Odin CultNet/RUDP snapshot payload encoding {document.PayloadEncoding} is not supported.");
+        }
+
+        using var stateJson = JsonDocument.Parse(MessagePackSerializer.ConvertToJson(new ReadOnlyMemory<byte>(document.Payload)));
+        var state = stateJson.RootElement;
+        var providers = state.TryGetProperty("providerCatalog", out var providerCatalogElement) &&
+                        providerCatalogElement.ValueKind == JsonValueKind.Array
+            ? JsonSerializer.Deserialize<List<ProviderCatalogEntry>>(providerCatalogElement.GetRawText(), JsonOptions) ?? []
+            : [];
+        var catalog = new ProviderCatalog(providers, TryGetMarqueeText(state));
+        var providersById = providers.ToDictionary(provider => provider.Id, StringComparer.Ordinal);
+        var frames = new List<ProviderFrame>();
+
+        if (state.TryGetProperty("surface", out var surface) &&
+            surface.TryGetProperty("root", out var root) &&
+            root.TryGetProperty("children", out var children) &&
+            children.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var child in children.EnumerateArray())
+            {
+                if (!string.Equals(child.TryGetProperty("kind", out var kind) ? kind.GetString() : "", "interface", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+                if (!child.TryGetProperty("props", out var props))
+                {
+                    continue;
+                }
+
+                var providerId = props.TryGetProperty("providerId", out var providerIdElement)
+                    ? ValueString(providerIdElement)
+                    : "";
+                if (string.IsNullOrWhiteSpace(providerId))
+                {
+                    continue;
+                }
+                if (!child.TryGetProperty("children", out var childSurfaces) ||
+                    childSurfaces.ValueKind != JsonValueKind.Array ||
+                    childSurfaces.GetArrayLength() == 0)
+                {
+                    continue;
+                }
+
+                var source = props.TryGetProperty("source", out var sourceElement) ? ValueString(sourceElement) : "";
+                var providerRoot = childSurfaces.EnumerateArray().First().Clone();
+
+                var provider = providersById.TryGetValue(providerId, out var advertised)
+                    ? advertised
+                    : new ProviderCatalogEntry(
+                        providerId,
+                        props.TryGetProperty("title", out var title) ? ValueString(title) : providerId,
+                        "Provider-owned Odin surface from CultNet/RUDP snapshot.",
+                        null,
+                        source,
+                        source,
+                        [],
+                        props.TryGetProperty("status", out var status) ? ValueString(status) : "unknown",
+                        props.TryGetProperty("updatedAt", out var updatedAt) ? ValueString(updatedAt) : "");
+
+                frames.Add(new ProviderFrame(provider, JsonDocument.Parse("{}").RootElement.Clone(), providerRoot));
+            }
+        }
+
+        return (catalog, frames);
+    }
+
+    private static string TryGetMarqueeText(JsonElement state)
+    {
+        if (state.TryGetProperty("surface", out var surface) &&
+            surface.TryGetProperty("root", out var root) &&
+            root.TryGetProperty("props", out var props) &&
+            props.TryGetProperty("marqueeText", out var marqueeText))
+        {
+            return ValueString(marqueeText);
+        }
+
+        return "";
     }
 
     private static bool IsDisplayProvider(ProviderCatalogEntry provider) =>
@@ -449,6 +646,31 @@ internal sealed class GjallarRenderer : IDisposable
         return new Uri($"{baseUri.Scheme}://{baseUri.Authority}{normalizedEndpoint}");
     }
 
+    private static IPEndPoint ParseEndpoint(string value, string label)
+    {
+        var trimmed = value.Trim();
+        var separator = trimmed.LastIndexOf(':');
+        if (separator <= 0 || separator == trimmed.Length - 1)
+        {
+            throw new ArgumentException($"{label} must be host:port, got '{value}'.", nameof(value));
+        }
+
+        var host = trimmed[..separator].Trim('[', ']');
+        var portText = trimmed[(separator + 1)..];
+        if (!int.TryParse(portText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var port) ||
+            port <= 0 || port > 65535)
+        {
+            throw new ArgumentException($"{label} port is invalid: {portText}", nameof(value));
+        }
+
+        var addresses = Dns.GetHostAddresses(host);
+        var address = addresses
+            .FirstOrDefault(static candidate => candidate.AddressFamily == AddressFamily.InterNetwork) ??
+            addresses.FirstOrDefault(static candidate => candidate.AddressFamily == AddressFamily.InterNetworkV6) ??
+            throw new ArgumentException($"{label} host has no IP address: {host}", nameof(value));
+        return new IPEndPoint(address, port);
+    }
+
     private static async Task<byte[]> ReadTextFrameAsync(ClientWebSocket socket, CancellationToken token)
     {
         var buffer = ArrayPool<byte>.Shared.Rent(1024 * 1024);
@@ -488,7 +710,7 @@ internal sealed class GjallarRenderer : IDisposable
                 providerId = frame.Provider.Id,
                 status = frame.Provider.Status ?? "unknown",
                 source = frame.Provider.Endpoint ?? "",
-                updatedAt = frame.State.TryGetProperty("updatedAt", out var updatedAt) ? ValueString(updatedAt) : "",
+                updatedAt = ResolveFrameUpdatedAt(frame),
                 layout = new
                 {
                     density = "dense",
@@ -529,6 +751,11 @@ internal sealed class GjallarRenderer : IDisposable
         };
         return JsonSerializer.SerializeToUtf8Bytes(document, JsonOptions);
     }
+
+    private static string ResolveFrameUpdatedAt(ProviderFrame frame) =>
+        frame.State.TryGetProperty("updatedAt", out var updatedAt)
+            ? ValueString(updatedAt)
+            : frame.Provider.UpdatedAt ?? "";
 
     private static string StableId(string value) =>
         string.Join("-", value
@@ -773,6 +1000,7 @@ internal sealed class GjallarRenderer : IDisposable
             receive = new
             {
                 status = lastReceiveStatus,
+                transport = config.InputTransportId,
                 error = lastReceiveError,
                 providerFetchError = lastProviderFetchError,
                 providerFetchUri = lastProviderFetchUri,

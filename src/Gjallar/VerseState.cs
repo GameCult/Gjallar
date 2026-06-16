@@ -162,7 +162,7 @@ internal sealed class GjallarVerseRuntime : IDisposable
                     Address = "asgard.nightwing.gjallar/framebuffer",
                     Kind = "dashboard",
                     Status = pulse.Status,
-                    InputTransport = "compatibility.odin-websocket-deck",
+                    InputTransport = config.InputTransportId,
                 },
             ],
         };
@@ -199,7 +199,7 @@ internal sealed class GjallarVerseRuntime : IDisposable
                     CardNode(
                         "nightwing-gjallar-transport",
                         "Transport",
-                        TextNode("nightwing-gjallar-input-transport", $"input: compatibility.odin-websocket-deck ({pulse.ReceiveStatus})"),
+                        TextNode("nightwing-gjallar-input-transport", $"input: {config.InputTransportId} ({pulse.ReceiveStatus})"),
                         TextNode("nightwing-gjallar-output-transport", "output: daemon-published-rudp-health + daemon-owned-cultcache-service-boundary"),
                         TextNode("nightwing-gjallar-witness", $"witness: {config.CultCachePath}"),
                         TextNode("nightwing-gjallar-status-path", $"status: {config.StatusPath}"),
@@ -376,14 +376,18 @@ internal sealed class GjallarVerseRuntime : IDisposable
         {
             RecordId = TransportProfileKey.Value,
             DaemonId = "nightwing-gjallar",
-            CurrentState = "partial-rudp-health-and-provider-store-live",
-            InputTransport = "compatibility.odin-websocket-deck",
+            CurrentState = config.UsesOdinCultNetRudp
+                ? "rudp-input-health-and-provider-store-live"
+                : "partial-rudp-health-and-provider-store-live",
+            InputTransport = config.InputTransportId,
             OutputTransport = "daemon-published-rudp-health + daemon-owned-cultcache-service-boundary",
             HealthContract = config.IdunnHealthContract,
             IdunnRudpHealth = config.IdunnRudpHealth,
             WitnessPath = config.CultCachePath,
             StatusPath = config.StatusPath,
-            CurrentCutLine = "Gjallar now owns the Nightwing CultCache witness and daemon health publication; Odin WebSocket deck input remains the explicit compatibility transport debt until the native C# CultNet/RUDP intake path lands.",
+            CurrentCutLine = config.UsesOdinCultNetRudp
+                ? "Gjallar now consumes Odin's accepted provider state over CultNet/RUDP snapshot polling while preserving Gjallar-owned Nightwing composition and daemon-owned health publication."
+                : "Gjallar now owns the Nightwing CultCache witness and daemon health publication; Odin WebSocket deck input remains the explicit compatibility transport debt until the native C# CultNet/RUDP intake path lands.",
             UpdatedAt = pulse.ObservedAt.ToString("O", CultureInfo.InvariantCulture),
         };
 }

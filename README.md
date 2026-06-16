@@ -67,21 +67,22 @@ Run against Odin's provider catalog:
 ```bash
 /opt/gamecult/gjallar/Gjallar \
   --fb /dev/fb0 \
-  --url ws://192.168.1.66:8797/eve/deck \
+  --odin-cultnet-rudp 192.168.1.66:17871 \
   --refresh-hz 60 \
   --stats-path /var/log/gjallar.status
 ```
 
-In catalog mode, Gjallar:
+In native CultNet/RUDP snapshot mode, Gjallar:
 
-1. reads `/eve/deck/providers`;
-2. filters display-capable provider surfaces;
-3. opens each `/eve/deck/<providerId>` stream;
-4. builds an in-memory `gjallar.overview` surface;
-5. packs panels into weighted pixel regions;
-6. chooses a font/cell resolution for each region;
-7. draws text, panels, gutters, and marquee;
-8. writes one BGRA frame to the framebuffer.
+1. requests Odin's accepted provider-state snapshot over `cultnet.transport.rudp.v0`;
+2. extracts provider-owned surface roots from Odin's accepted state;
+3. builds an in-memory `gjallar.overview` surface;
+4. packs panels into weighted pixel regions;
+5. chooses a font/cell resolution for each region;
+6. draws text, panels, gutters, and marquee;
+7. writes one BGRA frame to the framebuffer.
+
+The older `--url ws://.../eve/deck` path remains as a compatibility fallback.
 
 ## Architecture
 
