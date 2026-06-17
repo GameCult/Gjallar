@@ -111,9 +111,13 @@ internal sealed class GjallarRenderer : IDisposable
     private int latestCatalogProviders;
     private int latestComposedProviders;
     private string lastReceiveStatus = "starting";
+    private string lastReceiveAttemptStatus = "starting";
     private string lastReceiveError = "";
     private string lastProviderFetchError = "";
     private string lastProviderFetchUri = "";
+    private DateTimeOffset lastSuccessfulCatalogReceiveAt = DateTimeOffset.MinValue;
+    private string lastSuccessfulCatalogReceiveObservedAt = "";
+    private int consecutiveCatalogReceiveFailures;
     private SceneCache? sceneCache;
     private FrameTimings lastTimings;
     private object[] lastPanelFontUsage = [];
@@ -344,6 +348,7 @@ internal sealed class GjallarRenderer : IDisposable
                 using var socket = new ClientWebSocket();
                 await socket.ConnectAsync(target, token).ConfigureAwait(false);
                 lastReceiveStatus = $"connected:{config.ProviderId}";
+                lastReceiveAttemptStatus = lastReceiveStatus;
                 lastReceiveError = "";
                 await ReceiveLoopAsync(socket, token).ConfigureAwait(false);
             }
@@ -354,6 +359,7 @@ internal sealed class GjallarRenderer : IDisposable
             catch (Exception error) when (!token.IsCancellationRequested)
             {
                 lastReceiveStatus = $"connect-error:{config.ProviderId}";
+                lastReceiveAttemptStatus = lastReceiveStatus;
                 lastReceiveError = error.Message;
                 await Task.Delay(TimeSpan.FromSeconds(2), token).ConfigureAwait(false);
             }
@@ -396,10 +402,11 @@ internal sealed class GjallarRenderer : IDisposable
                 while (!token.IsCancellationRequested)
                 {
                     var (catalog, frames) = ReadCultNetSnapshot(transport);
+                    var observedAt = DateTimeOffset.UtcNow;
                     latestCatalogProviders = catalog.Providers.Count;
                     latestComposedProviders = frames.Count;
                     Interlocked.Exchange(ref latestStateJson, BuildGjallarSurface(catalog, frames));
-                    lastReceiveStatus = "catalog-composed";
+                    MarkCatalogReceiveSuccess(observedAt);
                     lastReceiveError = "";
                     lastProviderFetchError = "";
 
@@ -413,8 +420,7 @@ internal sealed class GjallarRenderer : IDisposable
             }
             catch (Exception error) when (!token.IsCancellationRequested)
             {
-                lastReceiveStatus = "catalog-error";
-                lastReceiveError = error.Message;
+                MarkCatalogReceiveFailure(error, DateTimeOffset.UtcNow);
                 await Task.Delay(TimeSpan.FromSeconds(2), token).ConfigureAwait(false);
             }
         }
@@ -440,18 +446,59 @@ internal sealed class GjallarRenderer : IDisposable
 
                 Interlocked.Exchange(ref latestStateJson, BuildGjallarSurface(catalog, states));
                 latestComposedProviders = states.Count;
-                lastReceiveStatus = "catalog-composed";
+                MarkCatalogReceiveSuccess(DateTimeOffset.UtcNow);
                 lastReceiveError = "";
             }
             catch (Exception error) when (!token.IsCancellationRequested)
             {
-                lastReceiveStatus = "catalog-error";
-                lastReceiveError = error.Message;
+                MarkCatalogReceiveFailure(error, DateTimeOffset.UtcNow);
                 // A missed catalog pass should make the display stale, not kill the horn.
             }
 
             await Task.Delay(TimeSpan.FromSeconds(Math.Max(1, config.CatalogRefreshSeconds)), token).ConfigureAwait(false);
         }
+    }
+
+    private TimeSpan CatalogReceiveStaleAfter() =>
+        TimeSpan.FromSeconds(Math.Max(10, config.CatalogRefreshSeconds * 3));
+
+    private string EffectiveReceiveStatus(DateTimeOffset observedAt)
+    {
+        if (!config.UsesOdinCultNetRudp && !string.IsNullOrWhiteSpace(config.ProviderId))
+        {
+            return lastReceiveStatus;
+        }
+
+        if (Volatile.Read(ref latestStateJson) is null)
+        {
+            return lastReceiveAttemptStatus == "starting" ? "starting" : "catalog-error";
+        }
+
+        if (lastSuccessfulCatalogReceiveAt == DateTimeOffset.MinValue)
+        {
+            return "catalog-error";
+        }
+
+        return observedAt - lastSuccessfulCatalogReceiveAt <= CatalogReceiveStaleAfter()
+            ? "catalog-composed"
+            : "catalog-stale";
+    }
+
+    private void MarkCatalogReceiveSuccess(DateTimeOffset observedAt)
+    {
+        lastSuccessfulCatalogReceiveAt = observedAt;
+        lastSuccessfulCatalogReceiveObservedAt = observedAt.ToString("O", CultureInfo.InvariantCulture);
+        consecutiveCatalogReceiveFailures = 0;
+        lastReceiveStatus = "catalog-composed";
+        lastReceiveAttemptStatus = "catalog-composed";
+    }
+
+    private void MarkCatalogReceiveFailure(Exception error, DateTimeOffset observedAt)
+    {
+        consecutiveCatalogReceiveFailures += 1;
+        lastReceiveAttemptStatus = "catalog-error";
+        lastReceiveError = error.Message;
+        lastReceiveStatus = EffectiveReceiveStatus(observedAt);
     }
 
     private async Task<ProviderCatalog> ReadProviderCatalogAsync(CancellationToken token)
@@ -999,11 +1046,15 @@ internal sealed class GjallarRenderer : IDisposable
             },
             receive = new
             {
-                status = lastReceiveStatus,
+                status = EffectiveReceiveStatus(started),
+                lastAttemptStatus = lastReceiveAttemptStatus,
                 transport = config.InputTransportId,
                 error = lastReceiveError,
                 providerFetchError = lastProviderFetchError,
                 providerFetchUri = lastProviderFetchUri,
+                lastSuccessfulAtUtc = lastSuccessfulCatalogReceiveObservedAt,
+                staleAfterSeconds = (int)CatalogReceiveStaleAfter().TotalSeconds,
+                consecutiveFailures = consecutiveCatalogReceiveFailures,
                 catalogProviders = latestCatalogProviders,
                 composedProviders = latestComposedProviders,
                 stateBytes = Volatile.Read(ref latestStateJson)?.Length ?? 0,
@@ -1102,10 +1153,13 @@ internal sealed class GjallarRenderer : IDisposable
             MeasuredFps = measuredFps,
             Timings = timings,
             ObservedAt = started,
-            ReceiveStatus = lastReceiveStatus,
+            ReceiveStatus = EffectiveReceiveStatus(started),
+            ReceiveAttemptStatus = lastReceiveAttemptStatus,
             ReceiveError = lastReceiveError,
             ProviderFetchError = lastProviderFetchError,
             ProviderFetchUri = lastProviderFetchUri,
+            LastSuccessfulReceiveAt = lastSuccessfulCatalogReceiveObservedAt,
+            ConsecutiveReceiveFailures = consecutiveCatalogReceiveFailures,
             CatalogProviders = latestCatalogProviders,
             ComposedProviders = latestComposedProviders,
             StateBytes = Volatile.Read(ref latestStateJson)?.Length ?? 0,
@@ -1151,8 +1205,11 @@ internal sealed class GjallarRenderer : IDisposable
         double measuredFps,
         DateTimeOffset observedAt)
     {
-        var state = string.Equals(status, "rendered", StringComparison.Ordinal) ? "healthy" : "active";
-        var detail = $"Gjallar framebuffer {status}; frames={frames}; catalogProviders={latestCatalogProviders}; composedProviders={latestComposedProviders}; fps={Math.Round(measuredFps, 2)}; receive={lastReceiveStatus}";
+        var receiveStatus = EffectiveReceiveStatus(observedAt);
+        var state = string.Equals(status, "rendered", StringComparison.Ordinal)
+            ? (receiveStatus == "catalog-composed" ? "healthy" : "dependency-unavailable")
+            : "active";
+        var detail = $"Gjallar framebuffer {status}; frames={frames}; catalogProviders={latestCatalogProviders}; composedProviders={latestComposedProviders}; fps={Math.Round(measuredFps, 2)}; receive={receiveStatus}; attempt={lastReceiveAttemptStatus}; failures={consecutiveCatalogReceiveFailures}; lastSuccess={lastSuccessfulCatalogReceiveObservedAt}";
         return new IdunnDaemonHealthRecord
         {
             DaemonId = config.IdunnDaemon,

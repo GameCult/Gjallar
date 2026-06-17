@@ -200,6 +200,8 @@ internal sealed class GjallarVerseRuntime : IDisposable
                         "nightwing-gjallar-transport",
                         "Transport",
                         TextNode("nightwing-gjallar-input-transport", $"input: {config.InputTransportId} ({pulse.ReceiveStatus})"),
+                        TextNode("nightwing-gjallar-input-attempt", $"attempt: {pulse.ReceiveAttemptStatus} / failures: {pulse.ConsecutiveReceiveFailures}"),
+                        TextNode("nightwing-gjallar-last-success", string.IsNullOrWhiteSpace(pulse.LastSuccessfulReceiveAt) ? "last success: none" : $"last success: {pulse.LastSuccessfulReceiveAt}"),
                         TextNode("nightwing-gjallar-output-transport", "output: daemon-published-rudp-health + daemon-owned-cultcache-service-boundary"),
                         TextNode("nightwing-gjallar-witness", $"witness: {config.CultCachePath}"),
                         TextNode("nightwing-gjallar-status-path", $"status: {config.StatusPath}"),
@@ -401,9 +403,12 @@ internal sealed class GjallarVersePulse
     public FrameTimings Timings { get; set; }
     public DateTimeOffset ObservedAt { get; set; }
     public string ReceiveStatus { get; set; } = "starting";
+    public string ReceiveAttemptStatus { get; set; } = "starting";
     public string ReceiveError { get; set; } = "";
     public string ProviderFetchError { get; set; } = "";
     public string ProviderFetchUri { get; set; } = "";
+    public string LastSuccessfulReceiveAt { get; set; } = "";
+    public int ConsecutiveReceiveFailures { get; set; }
     public int CatalogProviders { get; set; }
     public int ComposedProviders { get; set; }
     public int StateBytes { get; set; }
