@@ -68,19 +68,25 @@ Run against Odin's provider catalog:
 /opt/gamecult/gjallar/Gjallar \
   --fb /dev/fb0 \
   --odin-cultnet-rudp 192.168.1.66:17871 \
+  --cultcache-path /var/lib/gjallar/gjallar.service.cc \
   --refresh-hz 60 \
   --stats-path /var/log/gjallar.status
 ```
 
 In native CultNet/RUDP snapshot mode, Gjallar:
 
-1. requests Odin's accepted provider-state snapshot over `cultnet.transport.rudp.v0`;
-2. extracts provider-owned surface roots from Odin's accepted state;
-3. builds an in-memory `gjallar.overview` surface;
-4. packs panels into weighted pixel regions;
-5. chooses a font/cell resolution for each region;
-6. draws text, panels, gutters, and marquee;
-7. writes one BGRA frame to the framebuffer.
+1. writes its typed CultCache witness and publishes its provider advertisement
+   once to Odin's CultMesh/RUDP document ingress;
+2. requests Odin's accepted provider-state snapshot over `cultnet.transport.rudp.v0`;
+3. extracts provider-owned surface roots from Odin's accepted state;
+4. builds an in-memory `gjallar.overview` surface;
+5. packs panels into weighted pixel regions;
+6. chooses a font/cell resolution for each region;
+7. draws text, panels, gutters, and marquee;
+8. writes one BGRA frame to the framebuffer.
+
+`--odin-cultmesh-rudp` may be used when Odin's document ingress differs from
+the snapshot endpoint. By default it reuses `--odin-cultnet-rudp`.
 
 The older `--url ws://.../eve/deck` path remains as a compatibility fallback.
 

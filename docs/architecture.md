@@ -16,8 +16,9 @@ regions may use different text resolutions.
   font assets, runtime flags, mouse input, Odin's canonical slash-delimited
   marquee tape, and Odin's accepted provider-state snapshot over CultNet/RUDP.
 - Outputs: `gjallar.overview` composition state, visible framebuffer frames,
-  cursor presentation, top-tab minimized panel presentation, and renderer
-  telemetry.
+  cursor presentation, top-tab minimized panel presentation, renderer
+  telemetry, a local CultCache witness, and a one-shot provider advertisement
+  into Odin's CultMesh/RUDP document ingress.
 - Derived state: pane weights, pixel rectangles, chosen font sizes, one-row
   gutter blocks, an ECS-style structure-of-arrays gutter ribbon, ordered
   marquee queue objects, ribbon occupancy, dirty rectangles, glyph runs,
@@ -36,7 +37,9 @@ regions may use different text resolutions.
 ## Current Pipeline
 
 ```text
-Odin accepted provider-state snapshot over CultNet/RUDP
+Gjallar typed CultCache witness
+  -> one startup provider advertisement to Odin over CultMesh/RUDP
+  -> Odin accepted provider-state snapshot over CultNet/RUDP
   -> display provider selection
   -> provider surface extraction
   -> canonical marquee tape passthrough

@@ -41,11 +41,12 @@ internal sealed class GjallarVerseRuntime : IDisposable
         return new GjallarVerseRuntime(config, cache);
     }
 
-    public void Publish(GjallarVersePulse pulse)
+    public GjallarProviderAdvertisementRecord Publish(GjallarVersePulse pulse)
     {
         lock (publishLock)
         {
-            Put(BuildProviderAdvertisement(pulse), ProviderAdvertisementKey);
+            var providerAdvertisement = BuildProviderAdvertisement(pulse);
+            Put(providerAdvertisement, ProviderAdvertisementKey);
             Put(BuildSurfaceState(pulse), SurfaceStateKey);
             Put(BuildRuntimeConfig(pulse), RuntimeConfigKey);
             Put(BuildFrameStatus(pulse), FrameStatusKey);
@@ -53,6 +54,7 @@ internal sealed class GjallarVerseRuntime : IDisposable
             Put(BuildTransportProfile(pulse), TransportProfileKey);
             Put(pulse.IdunnHealth, DaemonHealthKey);
             cache.FlushAllBackingStores();
+            return providerAdvertisement;
         }
     }
 

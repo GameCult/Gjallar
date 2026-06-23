@@ -33,29 +33,35 @@ internal sealed record GjallarConfig(
     string MousePath,
     string SpecimenText,
     string CultCachePath,
+    string OdinCultMeshRudpEndpoint,
     string IdunnRudpHealth,
     string IdunnDaemon,
     string IdunnHealthContract)
 {
-    public static GjallarConfig Parse(IReadOnlyList<string> args) => new(
-        StringArg(args, "--fb", "/dev/fb0"),
-        StringArg(args, "--url", "ws://192.168.1.66:8797/eve/deck"),
-        StringArg(args, "--odin-cultnet-rudp", Environment.GetEnvironmentVariable("GJALLAR_ODIN_CULTNET_RUDP") ?? ""),
-        StringArg(args, "--provider", ""),
-        IntArg(args, "--refresh-hz", 2),
-        IntArg(args, "--catalog-refresh-seconds", 5),
-        StringArg(args, "--stats-path", "/var/log/gjallar.status"),
-        StringArg(args, "--frame-dump-path", ""),
-        IntArg(args, "--frames", 0),
-        IntArg(args, "--width", 0),
-        IntArg(args, "--height", 0),
-        StringArg(args, "--font", ""),
-        StringArg(args, "--mouse", "/dev/input/mice"),
-        ResolveSpecimenText(args),
-        StringArg(args, "--cultcache-path", Environment.GetEnvironmentVariable("GJALLAR_CULTCACHE_PATH") ?? ""),
-        StringArg(args, "--idunn-rudp-health", Environment.GetEnvironmentVariable("GJALLAR_IDUNN_RUDP_HEALTH") ?? ""),
-        StringArg(args, "--idunn-daemon", Environment.GetEnvironmentVariable("GJALLAR_IDUNN_DAEMON") ?? "nightwing-gjallar"),
-        StringArg(args, "--idunn-health-contract", Environment.GetEnvironmentVariable("GJALLAR_IDUNN_HEALTH_CONTRACT") ?? "gjallar.cultnet-rudp-framebuffer-composition-health"));
+    public static GjallarConfig Parse(IReadOnlyList<string> args)
+    {
+        var odinCultNetRudp = StringArg(args, "--odin-cultnet-rudp", Environment.GetEnvironmentVariable("GJALLAR_ODIN_CULTNET_RUDP") ?? "");
+        return new GjallarConfig(
+            StringArg(args, "--fb", "/dev/fb0"),
+            StringArg(args, "--url", "ws://192.168.1.66:8797/eve/deck"),
+            odinCultNetRudp,
+            StringArg(args, "--provider", ""),
+            IntArg(args, "--refresh-hz", 2),
+            IntArg(args, "--catalog-refresh-seconds", 5),
+            StringArg(args, "--stats-path", "/var/log/gjallar.status"),
+            StringArg(args, "--frame-dump-path", ""),
+            IntArg(args, "--frames", 0),
+            IntArg(args, "--width", 0),
+            IntArg(args, "--height", 0),
+            StringArg(args, "--font", ""),
+            StringArg(args, "--mouse", "/dev/input/mice"),
+            ResolveSpecimenText(args),
+            StringArg(args, "--cultcache-path", Environment.GetEnvironmentVariable("GJALLAR_CULTCACHE_PATH") ?? ""),
+            StringArg(args, "--odin-cultmesh-rudp", Environment.GetEnvironmentVariable("GJALLAR_ODIN_CULTMESH_RUDP") ?? odinCultNetRudp),
+            StringArg(args, "--idunn-rudp-health", Environment.GetEnvironmentVariable("GJALLAR_IDUNN_RUDP_HEALTH") ?? ""),
+            StringArg(args, "--idunn-daemon", Environment.GetEnvironmentVariable("GJALLAR_IDUNN_DAEMON") ?? "nightwing-gjallar"),
+            StringArg(args, "--idunn-health-contract", Environment.GetEnvironmentVariable("GJALLAR_IDUNN_HEALTH_CONTRACT") ?? "gjallar.cultnet-rudp-framebuffer-composition-health"));
+    }
 
     public bool UsesOdinCultNetRudp =>
         !string.IsNullOrWhiteSpace(OdinCultNetRudpEndpoint);
@@ -142,6 +148,12 @@ internal sealed class GjallarRenderer : IDisposable
     private string cultCachePublishStatus = "disabled";
     private string cultCachePublishError = "";
     private string cultCachePublishObservedAt = "";
+    private readonly object odinStartupRespectLock = new();
+    private bool odinStartupRespectQueued;
+    private string odinStartupRespectStatus = "disabled";
+    private string odinStartupRespectError = "";
+    private string odinStartupRespectEndpoint = "";
+    private string odinStartupRespectObservedAt = "";
 
     public GjallarRenderer(GjallarConfig config)
     {
@@ -1105,6 +1117,13 @@ internal sealed class GjallarRenderer : IDisposable
                 error = cultCachePublishError,
                 observedAtUtc = cultCachePublishObservedAt,
             },
+            odinStartupRespect = new
+            {
+                endpoint = odinStartupRespectEndpoint,
+                status = odinStartupRespectStatus,
+                error = odinStartupRespectError,
+                observedAtUtc = odinStartupRespectObservedAt,
+            },
             paintMs = Math.Round(paintMs, 2),
             timings = new
             {
@@ -1186,10 +1205,11 @@ internal sealed class GjallarRenderer : IDisposable
 
         try
         {
-            verseRuntime.Publish(pulse);
+            var providerAdvertisement = verseRuntime.Publish(pulse);
             cultCachePublishStatus = "published";
             cultCachePublishError = "";
             cultCachePublishObservedAt = started.ToString("O", CultureInfo.InvariantCulture);
+            QueueOdinStartupRespectIfNeeded(providerAdvertisement, started);
         }
         catch (Exception error)
         {
@@ -1197,6 +1217,50 @@ internal sealed class GjallarRenderer : IDisposable
             cultCachePublishError = error.Message;
             cultCachePublishObservedAt = started.ToString("O", CultureInfo.InvariantCulture);
         }
+    }
+
+    private void QueueOdinStartupRespectIfNeeded(GjallarProviderAdvertisementRecord providerAdvertisement, DateTimeOffset observedAt)
+    {
+        if (string.IsNullOrWhiteSpace(config.OdinCultMeshRudpEndpoint))
+        {
+            odinStartupRespectStatus = "disabled";
+            return;
+        }
+
+        lock (odinStartupRespectLock)
+        {
+            if (odinStartupRespectQueued)
+            {
+                return;
+            }
+
+            odinStartupRespectQueued = true;
+            odinStartupRespectStatus = "publishing";
+            odinStartupRespectError = "";
+            odinStartupRespectEndpoint = config.OdinCultMeshRudpEndpoint;
+            odinStartupRespectObservedAt = observedAt.ToString("O", CultureInfo.InvariantCulture);
+        }
+
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                GjallarOdinProviderPublisher.Publish(config.OdinCultMeshRudpEndpoint, config.IdunnDaemon, providerAdvertisement);
+                lock (odinStartupRespectLock)
+                {
+                    odinStartupRespectStatus = "published";
+                    odinStartupRespectError = "";
+                }
+            }
+            catch (Exception error)
+            {
+                lock (odinStartupRespectLock)
+                {
+                    odinStartupRespectStatus = "publish-error";
+                    odinStartupRespectError = error.Message;
+                }
+            }
+        });
     }
 
     private IdunnDaemonHealthRecord BuildIdunnDaemonHealthRecord(
@@ -2788,6 +2852,83 @@ internal static class IdunnRudpHealthPublisher
         var addresses = Dns.GetHostAddresses(host);
         var address = addresses.FirstOrDefault(static candidate => candidate.AddressFamily == AddressFamily.InterNetwork) ??
             throw new ArgumentException($"Idunn RUDP endpoint host has no IPv4 address: {host}", nameof(value));
+        return new IPEndPoint(address, port);
+    }
+}
+
+internal static class GjallarOdinProviderPublisher
+{
+    private const uint ConnectionId = 0x0d1d0002;
+
+    public static void Publish(string endpoint, string runtimeId, GjallarProviderAdvertisementRecord advertisement)
+    {
+        var remote = ParseEndpoint(endpoint);
+        using var socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+        socket.Bind(new IPEndPoint(IPAddress.Any, 0));
+        socket.ReceiveTimeout = 100;
+        using var transport = new CultNetRudpSocketTransportConnection(new CultNetRudpSocketTransportOptions
+        {
+            RuntimeId = string.IsNullOrWhiteSpace(runtimeId) ? "nightwing-gjallar" : runtimeId,
+            Socket = socket,
+            Mode = CultNetRudpSocketMode.Client,
+            RemoteEndPoint = remote,
+            ConnectionId = ConnectionId,
+            InitialSequence = 1,
+            ResendDelayMs = 100,
+        });
+
+        if (!transport.ConnectAndWait(Array.Empty<byte>(), TimeSpan.FromSeconds(5), TimeSpan.FromMilliseconds(20)))
+        {
+            throw new TimeoutException($"timed out connecting Gjallar Odin provider publisher to {endpoint}");
+        }
+
+        var storedAt = string.IsNullOrWhiteSpace(advertisement.UpdatedAt)
+            ? DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture)
+            : advertisement.UpdatedAt;
+        var sourceRuntimeId = string.IsNullOrWhiteSpace(runtimeId) ? "nightwing-gjallar" : runtimeId;
+        var message = new CultNetDocumentPutRawMessage
+        {
+            MessageId = $"gjallar-provider:{advertisement.ProviderId}:{storedAt.Replace(':', '-')}",
+            Document = new CultNetRawDocumentRecord
+            {
+                SchemaId = "gamecult.eve.provider_advertisement.v1",
+                RecordKey = advertisement.ProviderId,
+                StoredAt = storedAt,
+                PayloadEncoding = "messagepack",
+                Payload = MessagePackSerializer.Serialize(advertisement, CultNetSchemaMessageSerialization.Options),
+                SourceRuntimeId = sourceRuntimeId,
+                SourceRole = "gjallar.provider",
+                Tags = ["startup-respect", "odin-verse-discovery"],
+            },
+        };
+        transport.SendSchema(CultNetSchemaMessageSerialization.Serialize(message));
+    }
+
+    private static IPEndPoint ParseEndpoint(string value)
+    {
+        var trimmed = value.Trim();
+        if (trimmed.StartsWith("rudp://", StringComparison.OrdinalIgnoreCase))
+        {
+            trimmed = trimmed["rudp://".Length..];
+        }
+
+        var separator = trimmed.LastIndexOf(':');
+        if (separator <= 0 || separator == trimmed.Length - 1)
+        {
+            throw new ArgumentException($"Odin CultMesh/RUDP endpoint must be host:port, got '{value}'.", nameof(value));
+        }
+
+        var host = trimmed[..separator].Trim('[', ']');
+        var portText = trimmed[(separator + 1)..];
+        if (!int.TryParse(portText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var port) ||
+            port <= 0 || port > 65535)
+        {
+            throw new ArgumentException($"Odin CultMesh/RUDP endpoint port is invalid: {portText}", nameof(value));
+        }
+
+        var addresses = Dns.GetHostAddresses(host);
+        var address = addresses.FirstOrDefault(static candidate => candidate.AddressFamily == AddressFamily.InterNetwork) ??
+            throw new ArgumentException($"Odin CultMesh/RUDP endpoint host has no IPv4 address: {host}", nameof(value));
         return new IPEndPoint(address, port);
     }
 }

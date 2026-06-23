@@ -1,6 +1,6 @@
 # Gjallar State
 
-Last updated: 2026-06-09
+Last updated: 2026-06-23
 
 ## Identity
 
@@ -26,7 +26,14 @@ surface sources
 - GitHub: `https://github.com/GameCult/Gjallar`
 - Runtime: `src/Gjallar/Gjallar.csproj`
 - Current deployment: Nightwing `gjallar.service`
-- Current feed: Odin provider catalog at `ws://192.168.1.66:8797/eve/deck`
+- Current feed: Odin accepted provider-state snapshot over CultNet/RUDP at
+  `192.168.1.66:17871`, with the old Odin Eve deck WebSocket path retained as
+  compatibility fallback.
+- Current CultCache witness: `/var/lib/gjallar/gjallar.service.cc`
+- Current startup respect: Gjallar publishes
+  `gamecult.eve.provider_advertisement.v1` once to Odin's CultMesh/RUDP
+  document ingress. `--odin-cultmesh-rudp` can override the document endpoint;
+  otherwise it reuses `--odin-cultnet-rudp`.
 - Current status path on Nightwing: `/var/log/gjallar.status`
 - Current cursor input: `/dev/input/mice`, rendered as a framebuffer crosshair.
 - Current minimized-panel presentation: a top tab row. Clicking a panel title
@@ -74,10 +81,12 @@ Observed live status after cursor/minimize cut:
   and minimized/restored panel state.
 - Inputs: provider catalogs, provider-owned surface trees, display dimensions,
   font assets, runtime flags, mouse deltas/buttons, Odin's canonical marquee
-  tape, and later native CultMesh subscriptions.
+  tape, Odin's accepted provider-state snapshot over CultNet/RUDP, and later
+  native CultMesh subscriptions.
 - Outputs: `gjallar.overview` composition state, framebuffer frames, sparse
   refresh streams, cursor presentation, top-tab minimized panel presentation, and
-  agent-readable panel captures.
+  agent-readable panel captures. Gjallar also emits a local CultCache witness
+  and a one-shot provider advertisement to Odin for Verse discovery.
 - Derived state: pane weights, pixel rectangles, selected fonts, one-row gutter
   blocks, an ECS-style structure-of-arrays gutter ribbon, ordered marquee queue
   objects, ribbon occupancy, dirty rectangles, glyph runs, title-bar hit
