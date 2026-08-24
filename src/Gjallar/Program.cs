@@ -444,6 +444,7 @@ internal sealed class GjallarRenderer : IDisposable
                 while (!token.IsCancellationRequested)
                 {
                     var (catalog, frames) = ReadCultNetSnapshot(transport);
+                    frames.RemoveAll(frame => !IsAggregateInput(frame));
                     var observedAt = DateTimeOffset.UtcNow;
                     latestCatalogProviders = catalog.Providers.Count;
                     latestComposedProviders = frames.Count;
@@ -486,6 +487,7 @@ internal sealed class GjallarRenderer : IDisposable
                     }
                 }
 
+                states.RemoveAll(frame => !IsAggregateInput(frame));
                 AcceptOverview(BuildGjallarOverview(catalog, states));
                 latestComposedProviders = states.Count;
                 MarkCatalogReceiveSuccess(DateTimeOffset.UtcNow);
@@ -793,10 +795,16 @@ internal sealed class GjallarRenderer : IDisposable
         Volatile.Write(ref latestOverviewSurface, overview.Surface);
     }
 
+    private static bool IsAggregateInput(ProviderFrame frame) =>
+        !string.Equals(frame.Provider.Id, "gjallar.overview", StringComparison.OrdinalIgnoreCase);
+
     private static GjallarOverview BuildGjallarOverview(ProviderCatalog catalog, IReadOnlyList<ProviderFrame> frames)
     {
         var observedAt = DateTimeOffset.UtcNow;
-        var children = frames.Select(frame => new
+        var aggregateFrames = frames
+            .Where(frame => !string.Equals(frame.Provider.Id, "gjallar.overview", StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        var children = aggregateFrames.Select(frame => new
         {
             id = $"gjallar-interface-{StableId(frame.Provider.Id)}",
             kind = "interface",
@@ -837,7 +845,7 @@ internal sealed class GjallarRenderer : IDisposable
                     props = new
                     {
                         title = "Gjallar",
-                        summary = $"{frames.Count} provider surfaces",
+                        summary = $"{aggregateFrames.Length} provider surfaces",
                         marqueeText = catalog.MarqueeText ?? "",
                     },
                     children,
@@ -845,7 +853,7 @@ internal sealed class GjallarRenderer : IDisposable
                 assets = Array.Empty<object>(),
             },
         };
-        var componentChildren = frames.Select(frame => new EveSurfaceComponent(
+        var componentChildren = aggregateFrames.Select(frame => new EveSurfaceComponent(
             $"gjallar-interface-{StableId(frame.Provider.Id)}",
             "interface",
             new Dictionary<string, string>(StringComparer.Ordinal)
@@ -870,7 +878,7 @@ internal sealed class GjallarRenderer : IDisposable
             new Dictionary<string, string>(StringComparer.Ordinal)
             {
                 ["title"] = "Gjallar",
-                ["summary"] = $"{frames.Count} provider surfaces",
+                ["summary"] = $"{aggregateFrames.Length} provider surfaces",
                 ["marqueeText"] = catalog.MarqueeText ?? "",
             },
             componentChildren);
@@ -1406,10 +1414,11 @@ internal sealed class GjallarRenderer : IDisposable
         DateTimeOffset observedAt)
     {
         var receiveStatus = EffectiveReceiveStatus(observedAt);
-        var state = string.Equals(status, "rendered", StringComparison.Ordinal)
-            ? (receiveStatus == "catalog-composed" ? "healthy" : "dependency-unavailable")
-            : "active";
-        var detail = $"Gjallar composition {status}; pulses={frames}; catalogProviders={latestCatalogProviders}; composedProviders={latestComposedProviders}; fps={Math.Round(measuredFps, 2)}; receive={receiveStatus}; attempt={lastReceiveAttemptStatus}; failures={consecutiveCatalogReceiveFailures}; lastSuccess={lastSuccessfulCatalogReceiveObservedAt}";
+        var publicationFailed = string.Equals(idunnRudpPublishStatus, "failed", StringComparison.Ordinal);
+        var state = receiveStatus == "catalog-composed" && !publicationFailed
+            ? "healthy"
+            : "dependency-unavailable";
+        var detail = $"Gjallar composition {status}; pulses={frames}; catalogProviders={latestCatalogProviders}; composedProviders={latestComposedProviders}; fps={Math.Round(measuredFps, 2)}; receive={receiveStatus}; attempt={lastReceiveAttemptStatus}; failures={consecutiveCatalogReceiveFailures}; lastSuccess={lastSuccessfulCatalogReceiveObservedAt}; healthPublication={idunnRudpPublishStatus}";
         return new IdunnDaemonHealthRecord
         {
             DaemonId = config.IdunnDaemon,

@@ -34,7 +34,7 @@ agent clients can lower without recreating membership or layout authority.
 
 ```text
 Odin accepted provider-state snapshot on Yggdrasil
-  -> one startup provider advertisement to Odin over CultMesh/RUDP
+  -> periodically refreshed provider advertisement and aggregate surface to Odin over CultMesh/RUDP
   -> Odin accepted provider-state snapshot over CultNet/RUDP
   -> display provider selection
   -> provider surface extraction

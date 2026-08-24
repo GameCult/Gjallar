@@ -27,14 +27,13 @@ surface sources
 - Target deployment: Yggdrasil `gjallar-yggdrasil.service`, beside Odin and Idunn.
 - Feed: Yggdrasil-local Odin accepted provider-state snapshot over CultNet/RUDP.
 - CultCache witness: `/var/lib/gamecult/gjallar/gjallar.service.cc`.
-- Current startup respect: Gjallar publishes
-  `gamecult.eve.provider_advertisement.v1` once to Odin's CultMesh/RUDP
+- Current publication: Gjallar periodically publishes its provider
+  advertisement and typed `gjallar.overview` surface to Odin's CultMesh/RUDP
   document ingress. `--odin-cultmesh-rudp` can override the document endpoint;
   otherwise it reuses `--odin-cultnet-rudp`.
 - Status path: `/var/lib/gamecult/gjallar/status.json`.
-- Current cursor input: `/dev/input/mice`, rendered as a framebuffer crosshair.
-- Current minimized-panel presentation: a top tab row. Clicking a panel title
-  minimizes it; clicking its tab restores it.
+- Optional framebuffer lowering can read `/dev/input/mice` and present local
+  cursor/minimized-panel interactions; the Yggdrasil daemon is headless.
 - Current marquee input: Odin's provider catalog `marqueeText`, built from the
   Stonks securities tape interwoven with ordered VoidBot poem lines. Gjallar
   treats each slash-delimited stonk or poetry line as one ordered marquee queue
@@ -137,8 +136,8 @@ Sources:
 Notcurses has a modern terminal rendering model built around planes, cells, and
 piles, plus rich terminal graphics and optional pixel protocols such as Sixel
 and Kitty. It is the closest conceptual neighbor for composited terminal
-surfaces. Gjallar differs by treating the framebuffer as the primary body and
-by making per-pane text resolution part of the compositor contract.
+surfaces. Gjallar differs by publishing a renderer-neutral typed aggregate;
+text resolution belongs to optional lowerers rather than the daemon contract.
 
 Sources:
 
@@ -168,7 +167,7 @@ Source: `https://en.wikipedia.org/wiki/Linux_framebuffer`
 
 - `GjallarRenderer` owns catalog reads, provider fetches, frame loop, and
   telemetry.
-- `BuildGjallarSurface` currently builds the in-memory `gjallar.overview`
+- `BuildGjallarOverview` currently builds the typed `gjallar.overview`
   surface.
 - `AabbPacker` owns weighted panel region packing.
 - `FontAtlas.ForTextBox` picks a font per panel based on available pixel area
