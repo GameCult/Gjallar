@@ -9,7 +9,7 @@ request_id="${IDUNN_DEPLOYMENT_REQUEST_ID:-}"
 case "$source_commit" in *[!0-9a-f]*|'') echo "Invalid Gjallar source commit." >&2; exit 1;; esac
 [ "${#source_commit}" -eq 40 ] || { echo "Gjallar source commit must be 40 hex characters." >&2; exit 1; }
 [ -n "$request_id" ] || { echo "Missing Idunn deployment request id." >&2; exit 1; }
-case "$request_id" in *[!A-Za-z0-9._-]*) echo "Invalid Idunn deployment request id." >&2; exit 1;; esac
+case "$request_id" in *[!A-Za-z0-9._:-]*) echo "Invalid Idunn deployment request id." >&2; exit 1;; esac
 
 sdk_image="mcr.microsoft.com/dotnet/sdk@sha256:0e53453ccfc8ff2d51319fe80c678971c6d0f8008dff3565fa88e15840b69854"
 build_root="/srv/gjallar/build/$request_id"
