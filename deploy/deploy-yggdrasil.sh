@@ -12,7 +12,8 @@ case "$source_commit" in *[!0-9a-f]*|'') echo "Invalid Gjallar source commit." >
 case "$request_id" in *[!A-Za-z0-9._:-]*) echo "Invalid Idunn deployment request id." >&2; exit 1;; esac
 
 sdk_image="mcr.microsoft.com/dotnet/sdk@sha256:0e53453ccfc8ff2d51319fe80c678971c6d0f8008dff3565fa88e15840b69854"
-build_root="/srv/gjallar/build/$request_id"
+build_id="$(printf '%s' "$request_id" | sha256sum | cut -d' ' -f1)"
+build_root="/srv/gjallar/build/$build_id"
 workspace="$build_root/workspace"
 publish="$build_root/publish"
 release="/srv/gjallar/releases/$source_commit"
