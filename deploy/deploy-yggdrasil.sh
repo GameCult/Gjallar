@@ -33,7 +33,7 @@ archive_repo() {
   sudo -H -u idunn git -C "$repo" fetch --prune origin
   sudo -H -u idunn git -C "$repo" cat-file -e "$commit^{commit}"
   install -d -o root -g root -m 0755 "$workspace/$name"
-  git -C "$repo" archive "$commit" | tar -x -C "$workspace/$name"
+  sudo -H -u idunn git -C "$repo" archive "$commit" | tar -x -C "$workspace/$name"
 }
 
 archive_repo Gjallar "$source_commit"
