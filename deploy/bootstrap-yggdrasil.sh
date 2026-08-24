@@ -11,7 +11,6 @@ clone_for_idunn() {
   path="/srv/build/$name"
   if [ ! -d "$path/.git" ]; then
     install -d -o idunn -g idunn -m 0755 "$path"
-    rmdir "$path"
     sudo -H -u idunn git clone --filter=blob:none --no-checkout "$origin" "$path"
   fi
   [ "$(sudo -H -u idunn git -C "$path" remote get-url origin)" = "$origin" ] || { echo "$path has a foreign origin." >&2; exit 1; }
