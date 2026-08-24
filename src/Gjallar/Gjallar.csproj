@@ -11,6 +11,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\..\CultMath\src\CultMath\CultMath.csproj" />
     <ProjectReference Include="..\..\..\CultLib\src\GameCult.Networking\GameCult.Networking.csproj" />
+    <ProjectReference Include="..\..\..\Eve\packages\org.gamecult.eve.surface\GameCult.Eve.Surface.csproj" />
   </ItemGroup>
   <ItemGroup>
     <Content Include="assets\fonts\**\*">

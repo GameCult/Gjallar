@@ -10,6 +10,7 @@ using System.Text;
 using System.Text.Json;
 using CultMath;
 using GameCult.Caching;
+using GameCult.Eve.Surface;
 using GameCult.Networking;
 using MessagePack;
 
@@ -36,7 +37,8 @@ internal sealed record GjallarConfig(
     string OdinCultMeshRudpEndpoint,
     string IdunnRudpHealth,
     string IdunnDaemon,
-    string IdunnHealthContract)
+    string IdunnHealthContract,
+    bool Headless)
 {
     public static GjallarConfig Parse(IReadOnlyList<string> args)
     {
@@ -59,8 +61,9 @@ internal sealed record GjallarConfig(
             StringArg(args, "--cultcache-path", Environment.GetEnvironmentVariable("GJALLAR_CULTCACHE_PATH") ?? ""),
             StringArg(args, "--odin-cultmesh-rudp", Environment.GetEnvironmentVariable("GJALLAR_ODIN_CULTMESH_RUDP") ?? odinCultNetRudp),
             StringArg(args, "--idunn-rudp-health", Environment.GetEnvironmentVariable("GJALLAR_IDUNN_RUDP_HEALTH") ?? ""),
-            StringArg(args, "--idunn-daemon", Environment.GetEnvironmentVariable("GJALLAR_IDUNN_DAEMON") ?? "nightwing-gjallar"),
-            StringArg(args, "--idunn-health-contract", Environment.GetEnvironmentVariable("GJALLAR_IDUNN_HEALTH_CONTRACT") ?? "gjallar.cultnet-rudp-framebuffer-composition-health"));
+            StringArg(args, "--idunn-daemon", Environment.GetEnvironmentVariable("GJALLAR_IDUNN_DAEMON") ?? "yggdrasil-gjallar"),
+            StringArg(args, "--idunn-health-contract", Environment.GetEnvironmentVariable("GJALLAR_IDUNN_HEALTH_CONTRACT") ?? "gjallar.cultnet-rudp-composition-health"),
+            FlagArg(args, "--headless") || string.Equals(Environment.GetEnvironmentVariable("GJALLAR_HEADLESS"), "1", StringComparison.Ordinal));
     }
 
     public bool UsesOdinCultNetRudp =>
@@ -87,6 +90,9 @@ internal sealed record GjallarConfig(
     private static int IntArg(IReadOnlyList<string> args, string name, int fallback) =>
         int.TryParse(StringArg(args, name, ""), NumberStyles.Integer, CultureInfo.InvariantCulture, out var value) ? value : fallback;
 
+    private static bool FlagArg(IReadOnlyList<string> args, string name) =>
+        args.Any(value => string.Equals(value, name, StringComparison.OrdinalIgnoreCase));
+
     private static string ResolveSpecimenText(IReadOnlyList<string> args)
     {
         var file = StringArg(args, "--specimen-text-file", "");
@@ -105,12 +111,13 @@ internal sealed class GjallarRenderer : IDisposable
     private static readonly JsonSerializerOptions StatusJson = new() { WriteIndented = true };
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
     private readonly GjallarConfig config;
-    private readonly FramebufferDevice framebuffer;
-    private readonly FontAtlas fonts;
+    private readonly FramebufferDevice? framebuffer;
+    private readonly FontAtlas? fonts;
     private readonly CancellationTokenSource stopping = new();
     private readonly PeriodicTimer timer;
     private readonly TimeSpan frameInterval;
     private byte[]? latestStateJson;
+    private EveSurfaceDocument? latestOverviewSurface;
     private int frameIndex;
     private long lastStatusTick;
     private int lastStatusFrame;
@@ -150,6 +157,7 @@ internal sealed class GjallarRenderer : IDisposable
     private string cultCachePublishObservedAt = "";
     private readonly object odinStartupRespectLock = new();
     private bool odinStartupRespectQueued;
+    private DateTimeOffset lastOdinPublicationAttemptAt = DateTimeOffset.MinValue;
     private string odinStartupRespectStatus = "disabled";
     private string odinStartupRespectError = "";
     private string odinStartupRespectEndpoint = "";
@@ -158,13 +166,16 @@ internal sealed class GjallarRenderer : IDisposable
     public GjallarRenderer(GjallarConfig config)
     {
         this.config = config;
-        framebuffer = FramebufferDevice.Open(config.FramebufferPath, config.Width, config.Height);
-        fonts = FontAtlas.Load(config.FontPath);
+        if (!config.Headless)
+        {
+            framebuffer = FramebufferDevice.Open(config.FramebufferPath, config.Width, config.Height);
+            fonts = FontAtlas.Load(config.FontPath);
+        }
         frameInterval = TimeSpan.FromSeconds(1.0 / Math.Max(1, config.RefreshHz));
         timer = new PeriodicTimer(frameInterval);
         lastStatusTick = Stopwatch.GetTimestamp();
-        cursorX = framebuffer.Width / 2;
-        cursorY = framebuffer.Height / 2;
+        cursorX = framebuffer?.Width / 2 ?? 0;
+        cursorY = framebuffer?.Height / 2 ?? 0;
         if (!string.IsNullOrWhiteSpace(config.CultCachePath))
         {
             verseRuntime = GjallarVerseRuntime.Create(config);
@@ -174,12 +185,31 @@ internal sealed class GjallarRenderer : IDisposable
 
     public async Task RunAsync()
     {
+        if (config.Headless)
+        {
+            var headlessReceiveTask = Task.Run(() => ConnectReceiveLoopAsync(stopping.Token));
+            var pulses = 0;
+            while (config.Frames <= 0 || pulses < config.Frames)
+            {
+                var started = DateTimeOffset.UtcNow;
+                pulses++;
+                WriteStatus("composing", pulses, 0, 0, default, started);
+                if (config.Frames > 0 && pulses >= config.Frames) break;
+                await timer.WaitForNextTickAsync(stopping.Token).ConfigureAwait(false);
+            }
+            stopping.Cancel();
+            try { await headlessReceiveTask.ConfigureAwait(false); }
+            catch (OperationCanceledException) when (stopping.IsCancellationRequested) { }
+            return;
+        }
+
+        var renderFramebuffer = framebuffer ?? throw new InvalidOperationException("Framebuffer backend is unavailable.");
         if (!string.IsNullOrWhiteSpace(config.SpecimenText))
         {
             lastTimings = RenderSpecimen(config.SpecimenText);
             if (!string.IsNullOrWhiteSpace(config.FrameDumpPath))
             {
-                framebuffer.WritePpm(config.FrameDumpPath);
+                renderFramebuffer.WritePpm(config.FrameDumpPath);
             }
 
             WriteStatus("specimen-rendered", 1, lastTimings.CopyMs + lastTimings.DecorMs + lastTimings.GutterMs + lastTimings.PresentMs, 0, lastTimings, DateTimeOffset.UtcNow);
@@ -199,7 +229,7 @@ internal sealed class GjallarRenderer : IDisposable
             WriteStatusIfDue("rendered", rendered, paintMs, lastTimings, started);
             if (!string.IsNullOrWhiteSpace(config.FrameDumpPath))
             {
-                framebuffer.WritePpm(config.FrameDumpPath);
+                renderFramebuffer.WritePpm(config.FrameDumpPath);
             }
 
             if (config.Frames > 0 && rendered >= config.Frames)
@@ -255,7 +285,7 @@ internal sealed class GjallarRenderer : IDisposable
                     lock (interactionLock)
                     {
                         cursorActive = true;
-                        cursorX = Math.Clamp(cursorX + dx, 0, Math.Max(0, framebuffer.Width - 1));
+                        cursorX = Math.Clamp(cursorX + dx, 0, Math.Max(0, framebuffer!.Width - 1));
                         cursorY = Math.Clamp(cursorY - dy, 0, Math.Max(0, framebuffer.Height - 1));
                     }
 
@@ -417,7 +447,7 @@ internal sealed class GjallarRenderer : IDisposable
                     var observedAt = DateTimeOffset.UtcNow;
                     latestCatalogProviders = catalog.Providers.Count;
                     latestComposedProviders = frames.Count;
-                    Interlocked.Exchange(ref latestStateJson, BuildGjallarSurface(catalog, frames));
+                    AcceptOverview(BuildGjallarOverview(catalog, frames));
                     MarkCatalogReceiveSuccess(observedAt);
                     lastReceiveError = "";
                     lastProviderFetchError = "";
@@ -456,7 +486,7 @@ internal sealed class GjallarRenderer : IDisposable
                     }
                 }
 
-                Interlocked.Exchange(ref latestStateJson, BuildGjallarSurface(catalog, states));
+                AcceptOverview(BuildGjallarOverview(catalog, states));
                 latestComposedProviders = states.Count;
                 MarkCatalogReceiveSuccess(DateTimeOffset.UtcNow);
                 lastReceiveError = "";
@@ -757,8 +787,15 @@ internal sealed class GjallarRenderer : IDisposable
         }
     }
 
-    private static byte[] BuildGjallarSurface(ProviderCatalog catalog, IReadOnlyList<ProviderFrame> frames)
+    private void AcceptOverview(GjallarOverview overview)
     {
+        Interlocked.Exchange(ref latestStateJson, overview.LegacyStateJson);
+        Volatile.Write(ref latestOverviewSurface, overview.Surface);
+    }
+
+    private static GjallarOverview BuildGjallarOverview(ProviderCatalog catalog, IReadOnlyList<ProviderFrame> frames)
+    {
+        var observedAt = DateTimeOffset.UtcNow;
         var children = frames.Select(frame => new
         {
             id = $"gjallar-interface-{StableId(frame.Provider.Id)}",
@@ -785,8 +822,8 @@ internal sealed class GjallarRenderer : IDisposable
             schema = "gamecult.gjallar.overview.v1",
             providerId = "gjallar.overview",
             title = "Gjallar",
-            version = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-            updatedAt = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture),
+            version = observedAt.ToUnixTimeMilliseconds(),
+            updatedAt = observedAt.ToString("O", CultureInfo.InvariantCulture),
             providerCatalog = catalog.Providers,
             surface = new
             {
@@ -808,8 +845,84 @@ internal sealed class GjallarRenderer : IDisposable
                 assets = Array.Empty<object>(),
             },
         };
-        return JsonSerializer.SerializeToUtf8Bytes(document, JsonOptions);
+        var componentChildren = frames.Select(frame => new EveSurfaceComponent(
+            $"gjallar-interface-{StableId(frame.Provider.Id)}",
+            "interface",
+            new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["title"] = frame.Provider.Title ?? frame.Provider.Id,
+                ["providerId"] = frame.Provider.Id,
+                ["status"] = frame.Provider.Status ?? "unknown",
+                ["source"] = frame.Provider.Endpoint ?? "",
+                ["updatedAt"] = ResolveFrameUpdatedAt(frame),
+            },
+            [ToEveComponent(frame.Root)],
+            Array.Empty<GameCult.Mesh.CultMeshStateBindingDescriptor>(),
+            Array.Empty<EveEmbeddedDocumentSlot>(),
+            new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["density"] = "dense",
+                ["viewportMode"] = "nested-scroll",
+            })).ToArray();
+        var root = new EveSurfaceComponent(
+            "gjallar-overview-root",
+            "dashboard",
+            new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["title"] = "Gjallar",
+                ["summary"] = $"{frames.Count} provider surfaces",
+                ["marqueeText"] = catalog.MarqueeText ?? "",
+            },
+            componentChildren);
+        var surface = new EveSurfaceDocument(
+            "surface-state",
+            EveSurfaceDocument.SchemaId,
+            "gjallar.overview",
+            "dashboard",
+            "Gjallar",
+            observedAt.ToUnixTimeMilliseconds(),
+            observedAt.ToString("O", CultureInfo.InvariantCulture),
+            new EveSurfaceTree("gjallar.overview.surface", root, []),
+            []);
+        return new GjallarOverview(surface, JsonSerializer.SerializeToUtf8Bytes(document, JsonOptions));
     }
+
+    private static EveSurfaceComponent ToEveComponent(JsonElement element)
+    {
+        var props = StringMap(element, "props");
+        var layout = StringMap(element, "layout");
+        var style = StringMap(element, "style");
+        var children = element.TryGetProperty("children", out var childElements) && childElements.ValueKind == JsonValueKind.Array
+            ? childElements.EnumerateArray().Select(ToEveComponent).ToArray()
+            : [];
+        return new EveSurfaceComponent(
+            StringProperty(element, "id"),
+            StringProperty(element, "kind"),
+            props,
+            children,
+            Array.Empty<GameCult.Mesh.CultMeshStateBindingDescriptor>(),
+            Array.Empty<EveEmbeddedDocumentSlot>(),
+            layout,
+            style);
+    }
+
+    private static Dictionary<string, string> StringMap(JsonElement owner, string property)
+    {
+        var values = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (!owner.TryGetProperty(property, out var map) || map.ValueKind != JsonValueKind.Object) return values;
+        foreach (var entry in map.EnumerateObject()) values[entry.Name] = JsonString(entry.Value);
+        return values;
+    }
+
+    private static string StringProperty(JsonElement owner, string property) =>
+        owner.TryGetProperty(property, out var value) ? JsonString(value) : "";
+
+    private static string JsonString(JsonElement value) => value.ValueKind switch
+    {
+        JsonValueKind.String => value.GetString() ?? "",
+        JsonValueKind.Null or JsonValueKind.Undefined => "",
+        _ => value.GetRawText(),
+    };
 
     private static string ResolveFrameUpdatedAt(ProviderFrame frame) =>
         frame.State.TryGetProperty("updatedAt", out var updatedAt)
@@ -870,6 +983,8 @@ internal sealed class GjallarRenderer : IDisposable
 
     private FrameTimings RenderOnce()
     {
+        var target = framebuffer!;
+        var atlas = fonts!;
         var stateJson = Volatile.Read(ref latestStateJson);
         HashSet<string> minimizedSnapshot;
         int minimizedSnapshotVersion;
@@ -885,16 +1000,16 @@ internal sealed class GjallarRenderer : IDisposable
             drawCursor = cursorActive;
         }
 
-        var frame = new FrameDocument(framebuffer.Width, framebuffer.Height, fonts, minimizedSnapshot);
+        var frame = new FrameDocument(target.Width, target.Height, atlas, minimizedSnapshot);
         var copyMs = 0.0;
         var decorMs = 0.0;
         var gutterMs = 0.0;
         var presentMs = 0.0;
         if (stateJson is null)
         {
-            frame.Clear(ToBgra(Voronoi.SampleTone(0, 0, framebuffer.Height, frameIndex, CultMathTone.Background, Math.Max(framebuffer.Width, framebuffer.Height))));
-            var statusFont = fonts.HeaderFor(framebuffer.Height);
-            frame.DrawText(fonts.IndexOf(statusFont), 16, 16, "Waiting for Odin Eve surface...", ToBgra(Voronoi.SampleTone(16, 16, framebuffer.Height, frameIndex, CultMathTone.Body, statusFont.Width)));
+            frame.Clear(ToBgra(Voronoi.SampleTone(0, 0, target.Height, frameIndex, CultMathTone.Background, Math.Max(target.Width, target.Height))));
+            var statusFont = atlas.HeaderFor(target.Height);
+            frame.DrawText(atlas.IndexOf(statusFont), 16, 16, "Waiting for Odin Eve surface...", ToBgra(Voronoi.SampleTone(16, 16, target.Height, frameIndex, CultMathTone.Body, statusFont.Width)));
         }
         else
         {
@@ -925,10 +1040,10 @@ internal sealed class GjallarRenderer : IDisposable
             latestTitleHits = frame.TitleHitRegions.ToArray();
         }
 
-        lastPanelFontUsage = frame.PanelFontUsage(fonts);
+        lastPanelFontUsage = frame.PanelFontUsage(atlas);
 
         var presentStarted = Stopwatch.GetTimestamp();
-        framebuffer.Present(frame.Pixels);
+        target.Present(frame.Pixels);
         presentMs = ElapsedMilliseconds(presentStarted, Stopwatch.GetTimestamp());
         frameIndex++;
         return new FrameTimings(copyMs, decorMs, gutterMs, presentMs);
@@ -936,18 +1051,20 @@ internal sealed class GjallarRenderer : IDisposable
 
     private FrameTimings RenderSpecimen(string specimenText)
     {
-        var frame = new FrameDocument(framebuffer.Width, framebuffer.Height, fonts);
+        var target = framebuffer!;
+        var atlas = fonts!;
+        var frame = new FrameDocument(target.Width, target.Height, atlas);
         var started = Stopwatch.GetTimestamp();
         frame.Clear(ColorBgra.Black);
 
-        var titleFont = fonts.Edge;
-        frame.DrawText(fonts.IndexOf(titleFont), 24, 24, "Gjallar Bitmap Specimen", new ColorBgra(255, 170, 90));
+        var titleFont = atlas.Edge;
+        frame.DrawText(atlas.IndexOf(titleFont), 24, 24, "Gjallar Bitmap Specimen", new ColorBgra(255, 170, 90));
 
         var sample = specimenText;
         var baselineY = 70;
-        foreach (var font in fonts.All)
+        foreach (var font in atlas.All)
         {
-            var index = fonts.IndexOf(font);
+            var index = atlas.IndexOf(font);
             var header = $"{font.Width}x{font.Height}  kana:{(font.SupportsKana ? "yes" : "no")}";
             frame.DrawText(index, 24, baselineY, header, new ColorBgra(255, 140, 80));
             baselineY += font.LineHeight + 6;
@@ -958,7 +1075,7 @@ internal sealed class GjallarRenderer : IDisposable
         }
 
         var presentStarted = Stopwatch.GetTimestamp();
-        framebuffer.Present(frame.Pixels);
+        target.Present(frame.Pixels);
         var presentMs = ElapsedMilliseconds(presentStarted, Stopwatch.GetTimestamp());
         frameIndex++;
         return new FrameTimings(ElapsedMilliseconds(started, presentStarted), 0, 0, presentMs);
@@ -1030,19 +1147,14 @@ internal sealed class GjallarRenderer : IDisposable
             statusCursorError,
             statusLastClick,
             visibleMarqueeRows);
-        var document = new
-        {
-            schema = "gamecult.gjallar.frame.v1",
-            service = "gjallar",
-            mode = "native-csharp-odin-eve-framebuffer",
-            presentMode = "single-contiguous-framebuffer-write",
-            status,
-            frames,
-            framebuffer = new { framebuffer.Width, framebuffer.Height, bytes = framebuffer.BufferBytes },
-            refreshHz = config.RefreshHz,
-            measuredFps = Math.Round(measuredFps, 2),
-            fonts = new
+        object framebufferStatus = framebuffer is null
+            ? new { enabled = false }
+            : new { enabled = true, framebuffer.Width, framebuffer.Height, bytes = framebuffer.BufferBytes };
+        object fontStatus = fonts is null
+            ? new { enabled = false }
+            : new
             {
+                enabled = true,
                 requestedPath = config.FontPath,
                 packagedFonts = new[]
                 {
@@ -1055,7 +1167,19 @@ internal sealed class GjallarRenderer : IDisposable
                 defaultFont = new { width = fonts.Default.Width, height = fonts.Default.Height, kana = fonts.Default.SupportsKana },
                 edgeFont = new { width = fonts.Edge.Width, height = fonts.Edge.Height, kana = fonts.Edge.SupportsKana },
                 loaded = fonts.Describe(),
-            },
+            };
+        var document = new
+        {
+            schema = "gamecult.gjallar.frame.v1",
+            service = "gjallar",
+            mode = config.Headless ? "yggdrasil-composition-daemon" : "framebuffer-lowering",
+            presentMode = config.Headless ? "typed-eve-surface-publication" : "single-contiguous-framebuffer-write",
+            status,
+            frames,
+            framebuffer = framebufferStatus,
+            refreshHz = config.RefreshHz,
+            measuredFps = Math.Round(measuredFps, 2),
+            fonts = fontStatus,
             receive = new
             {
                 status = EffectiveReceiveStatus(started),
@@ -1182,6 +1306,7 @@ internal sealed class GjallarRenderer : IDisposable
             CatalogProviders = latestCatalogProviders,
             ComposedProviders = latestComposedProviders,
             StateBytes = Volatile.Read(ref latestStateJson)?.Length ?? 0,
+            OverviewSurface = Volatile.Read(ref latestOverviewSurface),
             Panels = sceneCache?.Panels.Count ?? 0,
             PanelFontUsage = lastPanelFontUsage,
             MinimizedPanels = minimizedCount,
@@ -1209,7 +1334,10 @@ internal sealed class GjallarRenderer : IDisposable
             cultCachePublishStatus = "published";
             cultCachePublishError = "";
             cultCachePublishObservedAt = started.ToString("O", CultureInfo.InvariantCulture);
-            QueueOdinStartupRespectIfNeeded(providerAdvertisement, started);
+            if (pulse.OverviewSurface is not null)
+            {
+                QueueOdinPublication(providerAdvertisement, pulse.OverviewSurface, started);
+            }
         }
         catch (Exception error)
         {
@@ -1219,7 +1347,7 @@ internal sealed class GjallarRenderer : IDisposable
         }
     }
 
-    private void QueueOdinStartupRespectIfNeeded(GjallarProviderAdvertisementRecord providerAdvertisement, DateTimeOffset observedAt)
+    private void QueueOdinPublication(GjallarProviderAdvertisementRecord providerAdvertisement, EveSurfaceDocument surface, DateTimeOffset observedAt)
     {
         if (string.IsNullOrWhiteSpace(config.OdinCultMeshRudpEndpoint))
         {
@@ -1229,12 +1357,13 @@ internal sealed class GjallarRenderer : IDisposable
 
         lock (odinStartupRespectLock)
         {
-            if (odinStartupRespectQueued)
+            if (odinStartupRespectQueued || observedAt - lastOdinPublicationAttemptAt < TimeSpan.FromSeconds(Math.Max(1, config.CatalogRefreshSeconds)))
             {
                 return;
             }
 
             odinStartupRespectQueued = true;
+            lastOdinPublicationAttemptAt = observedAt;
             odinStartupRespectStatus = "publishing";
             odinStartupRespectError = "";
             odinStartupRespectEndpoint = config.OdinCultMeshRudpEndpoint;
@@ -1245,7 +1374,7 @@ internal sealed class GjallarRenderer : IDisposable
         {
             try
             {
-                GjallarOdinProviderPublisher.Publish(config.OdinCultMeshRudpEndpoint, config.IdunnDaemon, providerAdvertisement);
+                GjallarOdinProviderPublisher.Publish(config.OdinCultMeshRudpEndpoint, config.IdunnDaemon, providerAdvertisement, surface);
                 lock (odinStartupRespectLock)
                 {
                     odinStartupRespectStatus = "published";
@@ -1258,6 +1387,13 @@ internal sealed class GjallarRenderer : IDisposable
                 {
                     odinStartupRespectStatus = "publish-error";
                     odinStartupRespectError = error.Message;
+                }
+            }
+            finally
+            {
+                lock (odinStartupRespectLock)
+                {
+                    odinStartupRespectQueued = false;
                 }
             }
         });
@@ -1273,7 +1409,7 @@ internal sealed class GjallarRenderer : IDisposable
         var state = string.Equals(status, "rendered", StringComparison.Ordinal)
             ? (receiveStatus == "catalog-composed" ? "healthy" : "dependency-unavailable")
             : "active";
-        var detail = $"Gjallar framebuffer {status}; frames={frames}; catalogProviders={latestCatalogProviders}; composedProviders={latestComposedProviders}; fps={Math.Round(measuredFps, 2)}; receive={receiveStatus}; attempt={lastReceiveAttemptStatus}; failures={consecutiveCatalogReceiveFailures}; lastSuccess={lastSuccessfulCatalogReceiveObservedAt}";
+        var detail = $"Gjallar composition {status}; pulses={frames}; catalogProviders={latestCatalogProviders}; composedProviders={latestComposedProviders}; fps={Math.Round(measuredFps, 2)}; receive={receiveStatus}; attempt={lastReceiveAttemptStatus}; failures={consecutiveCatalogReceiveFailures}; lastSuccess={lastSuccessfulCatalogReceiveObservedAt}";
         return new IdunnDaemonHealthRecord
         {
             DaemonId = config.IdunnDaemon,
@@ -1367,12 +1503,12 @@ internal sealed class GjallarRenderer : IDisposable
         }
 
         var providers = root.PanelChildren().Where(node => !node.IsScaffoldOnly()).ToArray();
-        var gutter = GutterSize(fonts.Edge);
+        var gutter = GutterSize(fonts!.Edge);
         var outerY = gutter;
         var minimizedProviders = providers.Where(node => minimizedSnapshot.Contains(node.StableKey())).ToArray();
         var activeProviders = providers.Where(node => !minimizedSnapshot.Contains(node.StableKey())).ToArray();
         var tabHeight = minimizedProviders.Length == 0 ? 0 : Math.Max(fonts.Edge.LineHeight + 10, GutterSize(fonts.Edge));
-        var activeRect = new RectI(0, outerY + tabHeight, framebuffer.Width, Math.Max(1, framebuffer.Height - outerY * 2 - tabHeight));
+        var activeRect = new RectI(0, outerY + tabHeight, framebuffer!.Width, Math.Max(1, framebuffer.Height - outerY * 2 - tabHeight));
         var packed = minimizedProviders.Length == 0
             ? []
             : MinimizedTabs(minimizedProviders, new RectI(0, outerY, framebuffer.Width, tabHeight), gutter).ToList();
@@ -1403,11 +1539,12 @@ internal sealed class GjallarRenderer : IDisposable
         stopping.Dispose();
         timer.Dispose();
         verseRuntime?.Dispose();
-        framebuffer.Dispose();
+        framebuffer?.Dispose();
     }
 }
 
 internal sealed record SceneCache(byte[] StateJson, IReadOnlyList<PackedPanel> Panels, GutterRibbon GutterRibbon, string MarqueeTape, int MinimizedVersion);
+internal sealed record GjallarOverview(EveSurfaceDocument Surface, byte[] LegacyStateJson);
 internal readonly record struct FrameTimings(double CopyMs, double DecorMs, double GutterMs, double PresentMs);
 internal sealed record ProviderCatalog(IReadOnlyList<ProviderCatalogEntry> Providers, string? MarqueeText = null);
 internal sealed record ProviderCatalogEntry(
@@ -2775,11 +2912,11 @@ internal sealed class ToneBatch(int resolutionY, int frameIndex)
 [MessagePackObject(AllowPrivate = true)]
 internal sealed class IdunnDaemonHealthRecord
 {
-    [Key(0)] public string DaemonId { get; set; } = "nightwing-gjallar";
+    [Key(0)] public string DaemonId { get; set; } = "yggdrasil-gjallar";
     [Key(1)] public string State { get; set; } = "active";
     [Key(2)] public string Detail { get; set; } = "";
     [Key(3)] public string ObservedAt { get; set; } = "";
-    [Key(4)] public string HealthContract { get; set; } = "gjallar.cultnet-rudp-framebuffer-composition-health";
+    [Key(4)] public string HealthContract { get; set; } = "gjallar.cultnet-rudp-composition-health";
     [Key(5)] public string PublicationSource { get; set; } = "daemon-published";
     [Key(6)] public string Transport { get; set; } = "cultnet.transport.rudp.v0";
 }
@@ -2860,7 +2997,7 @@ internal static class GjallarOdinProviderPublisher
 {
     private const uint ConnectionId = 0x0d1d0002;
 
-    public static void Publish(string endpoint, string runtimeId, GjallarProviderAdvertisementRecord advertisement)
+    public static void Publish(string endpoint, string runtimeId, GjallarProviderAdvertisementRecord advertisement, EveSurfaceDocument surface)
     {
         var remote = ParseEndpoint(endpoint);
         using var socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
@@ -2868,7 +3005,7 @@ internal static class GjallarOdinProviderPublisher
         socket.ReceiveTimeout = 100;
         using var transport = new CultNetRudpSocketTransportConnection(new CultNetRudpSocketTransportOptions
         {
-            RuntimeId = string.IsNullOrWhiteSpace(runtimeId) ? "nightwing-gjallar" : runtimeId,
+            RuntimeId = string.IsNullOrWhiteSpace(runtimeId) ? "yggdrasil-gjallar" : runtimeId,
             Socket = socket,
             Mode = CultNetRudpSocketMode.Client,
             RemoteEndPoint = remote,
@@ -2885,7 +3022,7 @@ internal static class GjallarOdinProviderPublisher
         var storedAt = string.IsNullOrWhiteSpace(advertisement.UpdatedAt)
             ? DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture)
             : advertisement.UpdatedAt;
-        var sourceRuntimeId = string.IsNullOrWhiteSpace(runtimeId) ? "nightwing-gjallar" : runtimeId;
+        var sourceRuntimeId = string.IsNullOrWhiteSpace(runtimeId) ? "yggdrasil-gjallar" : runtimeId;
         var message = new CultNetDocumentPutRawMessage
         {
             MessageId = $"gjallar-provider:{advertisement.ProviderId}:{storedAt.Replace(':', '-')}",
@@ -2902,6 +3039,22 @@ internal static class GjallarOdinProviderPublisher
             },
         };
         transport.SendSchema(CultNetSchemaMessageSerialization.Serialize(message));
+        var surfaceMessage = new CultNetDocumentPutRawMessage
+        {
+            MessageId = $"gjallar-surface:{surface.ProviderId}:{surface.Version}",
+            Document = new CultNetRawDocumentRecord
+            {
+                SchemaId = EveSurfaceDocument.SchemaId,
+                RecordKey = surface.ProviderId,
+                StoredAt = surface.UpdatedAtUtc,
+                PayloadEncoding = "messagepack",
+                Payload = MessagePackSerializer.Serialize(surface, CultNetSchemaMessageSerialization.Options),
+                SourceRuntimeId = sourceRuntimeId,
+                SourceRole = "gjallar.compositor",
+                Tags = ["aggregate-surface", "odin-visible-providers"],
+            },
+        };
+        transport.SendSchema(CultNetSchemaMessageSerialization.Serialize(surfaceMessage));
     }
 
     private static IPEndPoint ParseEndpoint(string value)

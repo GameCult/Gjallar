@@ -1,0 +1,20 @@
+[Unit]
+Description=Gjallar Yggdrasil Eve surface compositor
+Wants=network-online.target odin.service idunn-yggdrasil.service
+After=network-online.target odin.service idunn-yggdrasil.service
+
+[Service]
+Type=simple
+User=gjallar
+Group=gjallar
+ExecStart=/srv/gjallar/current/Gjallar --headless --odin-cultnet-rudp 127.0.0.1:17871 --odin-cultmesh-rudp 127.0.0.1:17871 --cultcache-path /var/lib/gamecult/gjallar/gjallar.service.cc --stats-path /var/lib/gamecult/gjallar/status.json --refresh-hz 2 --catalog-refresh-seconds 5 --idunn-rudp-health 10.77.0.1:17870 --idunn-daemon yggdrasil-gjallar --idunn-health-contract gjallar.cultnet-rudp-composition-health
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/gamecult/gjallar
+
+[Install]
+WantedBy=multi-user.target

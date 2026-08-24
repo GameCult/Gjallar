@@ -1,6 +1,6 @@
 # Gjallar
 
-Gjallar is a framebuffer-native, multi-scale TUI compositor.
+Gjallar is the renderer-neutral compositor for Odin-visible Eve surfaces.
 
 Most terminal UI systems assume one cell grid. Most dashboards assume a browser.
 Gjallar starts from a different premise: a live machine room deserves a surface
@@ -31,9 +31,9 @@ operator signal, all on the same physical display.
 
 ## Why It Exists
 
-The immediate body is Nightwing: a local machine with an attached framebuffer
-display. The current feed comes from Odin's provider catalog. Odin discovers
-what surfaces exist; Gjallar decides how to show them.
+The daemon body is Yggdrasil beside Odin and Idunn. Odin discovers and accepts
+provider surfaces; Gjallar composes every visible surface into one tiled
+`gjallar.overview` Eve document. Eve clients decide how to draw that document.
 
 The product is broader than that first deployment:
 
@@ -62,15 +62,15 @@ Publish a self-contained Linux build:
 dotnet publish .\src\Gjallar\Gjallar.csproj -c Release -r linux-x64 --self-contained true -o .\scratch\publish\gjallar
 ```
 
-Run against Odin's provider catalog:
+Run the Yggdrasil composition daemon against Odin's local snapshot endpoint:
 
 ```bash
-/opt/gamecult/gjallar/Gjallar \
-  --fb /dev/fb0 \
-  --odin-cultnet-rudp 192.168.1.66:17871 \
-  --cultcache-path /var/lib/gjallar/gjallar.service.cc \
-  --refresh-hz 60 \
-  --stats-path /var/log/gjallar.status
+/srv/gjallar/current/Gjallar \
+  --headless \
+  --odin-cultnet-rudp 127.0.0.1:17871 \
+  --odin-cultmesh-rudp 127.0.0.1:17871 \
+  --cultcache-path /var/lib/gamecult/gjallar/gjallar.service.cc \
+  --stats-path /var/lib/gamecult/gjallar/status.json
 ```
 
 In native CultNet/RUDP snapshot mode, Gjallar:
@@ -79,23 +79,26 @@ In native CultNet/RUDP snapshot mode, Gjallar:
    once to Odin's CultMesh/RUDP document ingress;
 2. requests Odin's accepted provider-state snapshot over `cultnet.transport.rudp.v0`;
 3. extracts provider-owned surface roots from Odin's accepted state;
-4. builds an in-memory `gjallar.overview` surface;
-5. packs panels into weighted pixel regions;
-6. chooses a font/cell resolution for each region;
-7. draws text, panels, gutters, and marquee;
-8. writes one BGRA frame to the framebuffer.
+4. builds the typed `gjallar.overview` surface with Eve's shared contract;
+5. persists and republishes that aggregate through CultCache/CultMesh/CultNet;
+6. emits composition freshness health to Idunn.
+
+The optional framebuffer backend remains a lowering/debug body. It is not
+started by the Yggdrasil daemon and must never be required for aggregation.
 
 `--odin-cultmesh-rudp` may be used when Odin's document ingress differs from
 the snapshot endpoint. By default it reuses `--odin-cultnet-rudp`.
 
-The older `--url ws://.../eve/deck` path remains as a compatibility fallback.
+The older `--url ws://.../eve/deck` path remains only for local compatibility
+testing and is not configured in the Yggdrasil service.
 
 ## Architecture
 
 Current internal organs:
 
 - `GjallarConfig`: runtime flags and display source selection.
-- `GjallarRenderer`: receive loop, catalog composition, frame loop, telemetry.
+- `GjallarRenderer`: receive loop and aggregate composition; framebuffer work
+  is conditional on the explicit non-headless backend.
 - `AabbPacker`: weighted region partitioning.
 - `EveNode`: retained surface tree projection.
 - `FrameDocument`: framebuffer drawing command surface.
@@ -137,26 +140,21 @@ Odin owns Verse discovery, provider cataloging, schemas, routes, and accepted
 provider/proxy surfaces. Gjallar consumes those surfaces and owns composition,
 density, tiling, font scale, update cadence, and display lowering.
 
-If Odin decides where a panel goes on Nightwing, ownership leaked upward. If a
-provider starts shaping itself for Nightwing instead of publishing a clean
-surface, ownership leaked downward.
+If Odin decides where a panel goes, ownership leaked upward. If a provider
+starts shaping itself for one client instead of publishing a clean surface,
+ownership leaked downward.
 
 ## Status
 
-Early but live. Gjallar is already deployed on Nightwing as `gjallar.service`
-and writes status telemetry such as:
+The Yggdrasil deployment body is defined under `deploy/` and `systemd/`.
+Headless status explicitly reports framebuffer disablement:
 
 ```json
 {
   "schema": "gamecult.gjallar.frame.v1",
-  "receive": {
-    "status": "catalog-composed",
-    "catalogProviders": 4,
-    "composedProviders": 3
-  },
-  "scene": {
-    "panels": 3
-  }
+  "mode": "yggdrasil-composition-daemon",
+  "presentMode": "typed-eve-surface-publication",
+  "framebuffer": { "enabled": false }
 }
 ```
 

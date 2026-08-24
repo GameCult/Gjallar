@@ -1,15 +1,14 @@
 # Gjallar State
 
-Last updated: 2026-06-23
+Last updated: 2026-08-24
 
 ## Identity
 
-Gjallar is the horn and the display body: a framebuffer-native, multi-scale TUI
-compositor for dense operational surfaces.
+Gjallar is the horn and composition organ: the Yggdrasil daemon that aggregates
+every Odin-visible Eve surface into one tiled, renderer-neutral overview.
 
-His job is not merely to view Odin. Odin is the first upstream witness, and
-Nightwing is the first physical body. The reusable product kernel is the
-compositor itself:
+His job is not merely to view Odin. Odin is the upstream witness and Yggdrasil
+is the daemon body. The reusable product kernel is the compositor itself:
 
 ```text
 surface sources
@@ -22,19 +21,17 @@ surface sources
 
 ## Body
 
-- Repo: `E:\Projects\Gjallar`
+- Repo: `F:\Projects\Gjallar`
 - GitHub: `https://github.com/GameCult/Gjallar`
 - Runtime: `src/Gjallar/Gjallar.csproj`
-- Current deployment: Nightwing `gjallar.service`
-- Current feed: Odin accepted provider-state snapshot over CultNet/RUDP at
-  `192.168.1.66:17871`, with the old Odin Eve deck WebSocket path retained as
-  compatibility fallback.
-- Current CultCache witness: `/var/lib/gjallar/gjallar.service.cc`
+- Target deployment: Yggdrasil `gjallar-yggdrasil.service`, beside Odin and Idunn.
+- Feed: Yggdrasil-local Odin accepted provider-state snapshot over CultNet/RUDP.
+- CultCache witness: `/var/lib/gamecult/gjallar/gjallar.service.cc`.
 - Current startup respect: Gjallar publishes
   `gamecult.eve.provider_advertisement.v1` once to Odin's CultMesh/RUDP
   document ingress. `--odin-cultmesh-rudp` can override the document endpoint;
   otherwise it reuses `--odin-cultnet-rudp`.
-- Current status path on Nightwing: `/var/log/gjallar.status`
+- Status path: `/var/lib/gamecult/gjallar/status.json`.
 - Current cursor input: `/dev/input/mice`, rendered as a framebuffer crosshair.
 - Current minimized-panel presentation: a top tab row. Clicking a panel title
   minimizes it; clicking its tab restores it.
@@ -75,28 +72,22 @@ Observed live status after cursor/minimize cut:
 
 ## Authority Map
 
-- Owner: Gjallar owns display composition, pane partitioning, per-pane virtual
-  grids, font-scale choice, gutter text continuity, frame/cell lowering, and
-  renderer telemetry. It also owns local cursor position, title-bar hit testing,
-  and minimized/restored panel state.
+- Owner: Gjallar owns aggregate membership, tiling, layout intent, visibility,
+  marquee placement, and the versioned `gjallar.overview` tree.
 - Inputs: provider catalogs, provider-owned surface trees, display dimensions,
   font assets, runtime flags, mouse deltas/buttons, Odin's canonical marquee
   tape, Odin's accepted provider-state snapshot over CultNet/RUDP, and later
   native CultMesh subscriptions.
-- Outputs: `gjallar.overview` composition state, framebuffer frames, sparse
-  refresh streams, cursor presentation, top-tab minimized panel presentation, and
-  agent-readable panel captures. Gjallar also emits a local CultCache witness
-  and a one-shot provider advertisement to Odin for Verse discovery.
+- Outputs: typed `gjallar.overview`, CultCache witness, continuous CultMesh/CultNet
+  publication, and daemon health. Rendered pixels belong to Eve clients.
 - Derived state: pane weights, pixel rectangles, selected fonts, one-row gutter
   blocks, an ECS-style structure-of-arrays gutter ribbon, ordered marquee queue
   objects, ribbon occupancy, dirty rectangles, glyph runs, title-bar hit
   regions, top-tab restore affordances, local
   minimized-panel keys, and compact text projections.
-- Forbidden writers: discovery systems must not decide Gjallar layout; providers
-  must not tune themselves for Nightwing; framebuffer backends must not invent
-  provider truth; Gjallar must not synthesize status-noise marquee content from
-  provider summaries. Odin and providers must not own Nightwing-local minimized
-  state.
+- Forbidden writers: Odin must not decide Gjallar layout; providers must not tune
+  themselves for clients; the Yggdrasil daemon must not open `/dev/fb0`; Eve
+  clients must not decide aggregate membership or provider truth.
 - Cut line: code that discovers what exists belongs upstream. Code that decides
   what the canonical marquee says belongs upstream. Code that decides how a
   physical or virtual display shows it, and what the local operator has
@@ -115,7 +106,7 @@ Gjallar's claim:
 
 The grandiose public phrase is allowed: a new paradigm of TUI. Keep it earned.
 The implementation must keep moving toward a real compositor model, not just a
-pretty Nightwing dashboard.
+pretty single-body dashboard.
 
 ## Research Ledger
 
@@ -168,8 +159,8 @@ Source: `https://directfb1.org/`
 
 The Linux framebuffer/fbdev path is older and often superseded by DRM in modern
 systems, but it remains useful on consoles, older hardware, embedded-ish bodies,
-and local appliance displays. Gjallar's current Nightwing deployment uses this
-boring durable body: write pixels to `/dev/fb0`.
+and local appliance displays. This remains useful for optional client lowerings;
+it is not the Yggdrasil daemon substrate.
 
 Source: `https://en.wikipedia.org/wiki/Linux_framebuffer`
 
@@ -221,10 +212,8 @@ Source: `https://en.wikipedia.org/wiki/Linux_framebuffer`
   ribbon address space, then lowers occupied addresses to screen cells. This
   removes middle-gutter entry/exit pile-ups caused by overlapping row-local
   object fragments.
-- Transport debt remains explicit: the live Nightwing body still consumes the
-  compatibility Eve deck bridge. The target input organ is native CultNet /
-  CultMesh typed state over the real GameCult transport, not a web-shaped
-  provider fetch loop.
+- Transport debt remains explicit: the compatibility Eve deck bridge exists for
+  local testing. The Yggdrasil daemon uses Odin's typed CultNet/CultMesh state.
 
 This is enough to run, but not enough to be proud forever. The next architectural
 cut is to extract explicit model types:

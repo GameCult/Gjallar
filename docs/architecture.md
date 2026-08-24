@@ -2,34 +2,30 @@
 
 ## Objective
 
-Gjallar owns framebuffer-native, multi-scale TUI composition: turning many
-surface inputs into one dense, inspectable operator display where different
-regions may use different text resolutions.
+Gjallar owns renderer-neutral aggregation and tiling: turning every Odin-visible
+provider surface into one typed Eve composition that GUI, TUI, framebuffer, and
+agent clients can lower without recreating membership or layout authority.
 
 ## Authority Map
 
-- Owner: Gjallar owns display composition, pane partitioning, per-pane virtual
-  text grids, font-scale selection, framebuffer lowering, and future sparse
-  refresh output. Gjallar also owns local cursor state, title-bar hit testing,
-  and minimized/restored panel state.
+- Owner: Gjallar owns aggregate membership, pane partitioning, layout intent,
+  visibility, and the versioned `gjallar.overview` surface.
 - Inputs: provider catalogs, provider-owned surface trees, display dimensions,
   font assets, runtime flags, mouse input, Odin's canonical slash-delimited
   marquee tape, and Odin's accepted provider-state snapshot over CultNet/RUDP.
-- Outputs: `gjallar.overview` composition state, visible framebuffer frames,
-  cursor presentation, top-tab minimized panel presentation, renderer
-  telemetry, a local CultCache witness, and a one-shot provider advertisement
-  into Odin's CultMesh/RUDP document ingress.
+- Outputs: typed `gjallar.overview` composition state, a local CultCache witness,
+  continuous CultMesh/CultNet surface publication, and composition health.
 - Derived state: pane weights, pixel rectangles, chosen font sizes, one-row
   gutter blocks, an ECS-style structure-of-arrays gutter ribbon, ordered
   marquee queue objects, ribbon occupancy, dirty rectangles, glyph runs,
   title-bar hit regions, top-tab restore affordances, local
   minimized-panel keys, and compact agent-readable projections.
 - Forbidden writers: discovery systems do not decide Gjallar layout; providers
-  do not tune themselves for Nightwing; framebuffer backends do not invent
-  provider truth; Gjallar does not derive marquee content from provider status
-  summaries; Odin and providers do not own Nightwing-local minimized state.
-- Shared paths: full-frame rendering, sparse refresh, future browser previews,
-  and agent text capture should lower the same overview model.
+  do not tune themselves for clients; Gjallar daemon mode does not open
+  `/dev/fb0`, capture local input, or own client pixels; client lowerers do not
+  decide aggregate membership or provider truth.
+- Shared paths: EveCanvas, browser, TUI/framebuffer, sparse refresh, and agent
+  capture all lower the same published overview model.
 - Deletion line: any code that both discovers provider truth and decides final
   screen composition belongs on one side or the other. Gjallar shows; discovery
   systems see.
@@ -37,13 +33,21 @@ regions may use different text resolutions.
 ## Current Pipeline
 
 ```text
-Gjallar typed CultCache witness
+Odin accepted provider-state snapshot on Yggdrasil
   -> one startup provider advertisement to Odin over CultMesh/RUDP
   -> Odin accepted provider-state snapshot over CultNet/RUDP
   -> display provider selection
   -> provider surface extraction
   -> canonical marquee tape passthrough
-  -> synthetic gjallar.overview surface
+  -> typed gjallar.overview Eve surface
+  -> CultCache + CultMesh/CultNet publication
+  -> Eve GUI/TUI/agent clients
+```
+
+Optional framebuffer lowering continues from the published overview:
+
+```text
+gjallar.overview
   -> EveNode panel extraction
   -> weighted AABB packing
   -> local minimized-state application

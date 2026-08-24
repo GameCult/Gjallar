@@ -1,17 +1,18 @@
 using System.Globalization;
 using GameCult.Caching;
 using GameCult.Caching.MessagePack;
+using GameCult.Eve.Surface;
 using MessagePack;
 
 internal sealed class GjallarVerseRuntime : IDisposable
 {
-    private static readonly CultRecordKey ProviderAdvertisementKey = new("provider:nightwing-gjallar");
-    private static readonly CultRecordKey SurfaceStateKey = new("surface:nightwing-gjallar");
+    private static readonly CultRecordKey ProviderAdvertisementKey = new("provider:gjallar-overview");
+    private static readonly CultRecordKey SurfaceStateKey = new("surface:gjallar-overview");
     private static readonly CultRecordKey RuntimeConfigKey = new("gjallar:runtime-config");
     private static readonly CultRecordKey FrameStatusKey = new("gjallar:frame-status");
     private static readonly CultRecordKey CommandBoundaryKey = new("gjallar:command-boundary");
     private static readonly CultRecordKey TransportProfileKey = new("gjallar:transport-profile");
-    private static readonly CultRecordKey DaemonHealthKey = new("nightwing-gjallar");
+    private static readonly CultRecordKey DaemonHealthKey = new("yggdrasil-gjallar");
 
     private readonly GjallarConfig config;
     private readonly CultCache cache;
@@ -47,7 +48,10 @@ internal sealed class GjallarVerseRuntime : IDisposable
         {
             var providerAdvertisement = BuildProviderAdvertisement(pulse);
             Put(providerAdvertisement, ProviderAdvertisementKey);
-            Put(BuildSurfaceState(pulse), SurfaceStateKey);
+            if (pulse.OverviewSurface is not null)
+            {
+                Put(pulse.OverviewSurface, SurfaceStateKey);
+            }
             Put(BuildRuntimeConfig(pulse), RuntimeConfigKey);
             Put(BuildFrameStatus(pulse), FrameStatusKey);
             Put(BuildCommandBoundary(pulse), CommandBoundaryKey);
@@ -67,23 +71,23 @@ internal sealed class GjallarVerseRuntime : IDisposable
         new()
         {
             RecordId = ProviderAdvertisementKey.Value,
-            ProviderId = "nightwing-gjallar",
-            ServiceId = "gjallar.framebuffer-compositor",
-            VerseId = "nightwing.local",
-            Title = "Nightwing Gjallar",
-            Description = "Nightwing framebuffer compositor that lowers Odin/provider deck state into the shared wall display.",
+            ProviderId = "gjallar.overview",
+            ServiceId = "gjallar.compositor",
+            VerseId = "yggdrasil.local",
+            Title = "Gjallar",
+            Description = "Yggdrasil composition daemon that publishes every Odin-visible Eve surface as one tiled aggregate.",
             CanonicalService = "asgard.gjallar",
-            LocatedService = "asgard.nightwing.gjallar",
-            CultMeshAddress = "asgard.nightwing.gjallar/framebuffer",
+            LocatedService = "asgard.yggdrasil.gjallar",
+            CultMeshAddress = "asgard.yggdrasil.gjallar/eve/gui",
             Status = "live",
             UpdatedAt = pulse.ObservedAt.ToString("O", CultureInfo.InvariantCulture),
             CapabilityIds =
             [
-                "framebuffer.composition",
+                "surface.aggregation",
+                "layout.composition",
                 "cultui-surface",
                 "daemon-health",
                 "cultcache-witness",
-                "operator.mouse-local",
             ],
             Endpoints = new[]
             {
@@ -101,21 +105,21 @@ internal sealed class GjallarVerseRuntime : IDisposable
                 },
                 new GjallarAdvertisedSchema
                 {
-                    SchemaId = "gamecult.eve.surface_state.v1",
+                    SchemaId = "gamecult.eve.surface.v1",
                     Owner = "gjallar.runtime",
-                    Description = "Gjallar-owned operator surface describing the compositor body, transport debt, and live frame telemetry.",
+                    Description = "Gjallar-owned aggregate containing every currently visible provider surface accepted by Odin.",
                 },
                 new GjallarAdvertisedSchema
                 {
                     SchemaId = "gjallar.runtime_config.v0",
                     Owner = "gjallar.runtime",
-                    Description = "Framebuffer/deck wiring, witness path, and runtime-owned transport settings.",
+                    Description = "Composition input, witness path, and runtime-owned transport settings.",
                 },
                 new GjallarAdvertisedSchema
                 {
                     SchemaId = "gjallar.frame_status.v0",
                     Owner = "gjallar.runtime",
-                    Description = "Latest framebuffer composition pulse, deck receive state, and render timings.",
+                    Description = "Latest aggregate composition pulse and input freshness.",
                 },
                 new GjallarAdvertisedSchema
                 {
@@ -147,7 +151,7 @@ internal sealed class GjallarVerseRuntime : IDisposable
                     Schemas =
                     [
                         "gamecult.eve.provider_advertisement.v1",
-                        "gamecult.eve.surface_state.v1",
+                        "gamecult.eve.surface.v1",
                         "gjallar.runtime_config.v0",
                         "gjallar.frame_status.v0",
                         "gjallar.command_boundary.v0",
@@ -160,8 +164,8 @@ internal sealed class GjallarVerseRuntime : IDisposable
             [
                 new GjallarAdvertisedSurface
                 {
-                    SurfaceId = "nightwing-gjallar",
-                    Address = "asgard.nightwing.gjallar/framebuffer",
+                    SurfaceId = "gjallar.overview",
+                    Address = "asgard.yggdrasil.gjallar/eve/gui",
                     Kind = "dashboard",
                     Status = pulse.Status,
                     InputTransport = config.InputTransportId,
@@ -169,131 +173,13 @@ internal sealed class GjallarVerseRuntime : IDisposable
             ],
         };
 
-    private GjallarSurfaceStateRecord BuildSurfaceState(GjallarVersePulse pulse)
-    {
-        var updatedAt = pulse.ObservedAt.ToString("O", CultureInfo.InvariantCulture);
-        return new GjallarSurfaceStateRecord
-        {
-            RecordId = "surface:nightwing-gjallar",
-            ProviderId = "nightwing-gjallar",
-            Title = "Nightwing Gjallar",
-            Version = pulse.ObservedAt.ToUnixTimeMilliseconds(),
-            UpdatedAt = updatedAt,
-            Surface = new GjallarSurfaceDocument
-            {
-                Schema = "gamecult.eve.surface.v1",
-                Id = "nightwing-gjallar.surface",
-                Title = "Nightwing Gjallar",
-                Root = DashboardNode(
-                    "nightwing-gjallar-root",
-                    "Nightwing Gjallar",
-                    $"{pulse.CatalogProviders} catalog / {pulse.ComposedProviders} composed / {pulse.Panels} visible panels",
-                    pulse.Status,
-                    GroupNode(
-                        "nightwing-gjallar-frame",
-                        "Frame",
-                        MetricNode("nightwing-gjallar-status", "status", pulse.Status),
-                        MetricNode("nightwing-gjallar-fps", "fps", pulse.MeasuredFps.ToString("0.0", CultureInfo.InvariantCulture)),
-                        MetricNode("nightwing-gjallar-panels", "panels", pulse.Panels.ToString(CultureInfo.InvariantCulture)),
-                        MetricNode("nightwing-gjallar-catalog", "catalog", pulse.CatalogProviders.ToString(CultureInfo.InvariantCulture)),
-                        MetricNode("nightwing-gjallar-composed", "composed", pulse.ComposedProviders.ToString(CultureInfo.InvariantCulture))
-                    ),
-                    CardNode(
-                        "nightwing-gjallar-transport",
-                        "Transport",
-                        TextNode("nightwing-gjallar-input-transport", $"input: {config.InputTransportId} ({pulse.ReceiveStatus})"),
-                        TextNode("nightwing-gjallar-input-attempt", $"attempt: {pulse.ReceiveAttemptStatus} / failures: {pulse.ConsecutiveReceiveFailures}"),
-                        TextNode("nightwing-gjallar-last-success", string.IsNullOrWhiteSpace(pulse.LastSuccessfulReceiveAt) ? "last success: none" : $"last success: {pulse.LastSuccessfulReceiveAt}"),
-                        TextNode("nightwing-gjallar-output-transport", "output: daemon-published-rudp-health + daemon-owned-cultcache-service-boundary"),
-                        TextNode("nightwing-gjallar-witness", $"witness: {config.CultCachePath}"),
-                        TextNode("nightwing-gjallar-status-path", $"status: {config.StatusPath}"),
-                        TextNode("nightwing-gjallar-health-endpoint", $"health: {config.IdunnRudpHealth}")
-                    ),
-                    CardNode(
-                        "nightwing-gjallar-cursor",
-                        "Cursor",
-                        TextNode("nightwing-gjallar-cursor-status", $"cursor: {pulse.CursorStatus}"),
-                        TextNode("nightwing-gjallar-cursor-position", $"position: {pulse.CursorX}, {pulse.CursorY}"),
-                        TextNode("nightwing-gjallar-last-click", $"last click: {pulse.LastClick}"),
-                        TextNode("nightwing-gjallar-cursor-error", string.IsNullOrWhiteSpace(pulse.CursorError) ? "cursor error: none" : $"cursor error: {pulse.CursorError}")
-                    ),
-                    CardNode(
-                        "nightwing-gjallar-scene",
-                        "Scene",
-                        TextNode("nightwing-gjallar-minimized", $"minimized: {pulse.MinimizedPanels}"),
-                        TextNode("nightwing-gjallar-title-hits", $"title hits: {pulse.TitleHitRegions}"),
-                        TextNode("nightwing-gjallar-gutters", $"gutter rows/cells: {pulse.GutterRows} / {pulse.GutterCells}"),
-                        TextNode("nightwing-gjallar-marquee", $"marquee chars: {pulse.MarqueeChars}"),
-                        TextNode("nightwing-gjallar-fetch", string.IsNullOrWhiteSpace(pulse.ProviderFetchError) ? "provider fetch: clean" : $"provider fetch: {pulse.ProviderFetchError}")
-                    )
-                ),
-                Assets = [],
-            },
-        };
-    }
-
-    private static GjallarSurfaceNode DashboardNode(string id, string title, string summary, string status, params GjallarSurfaceNode[] children) =>
-        new()
-        {
-            Id = id,
-            Kind = "dashboard",
-            Props = new GjallarSurfaceProps
-            {
-                Title = title,
-                Summary = summary,
-                Status = status,
-            },
-            Children = children,
-        };
-
-    private static GjallarSurfaceNode GroupNode(string id, string title, params GjallarSurfaceNode[] children) =>
-        new()
-        {
-            Id = id,
-            Kind = "group",
-            Props = new GjallarSurfaceProps { Title = title },
-            Children = children,
-        };
-
-    private static GjallarSurfaceNode CardNode(string id, string title, params GjallarSurfaceNode[] children) =>
-        new()
-        {
-            Id = id,
-            Kind = "card",
-            Props = new GjallarSurfaceProps { Title = title },
-            Children = children,
-        };
-
-    private static GjallarSurfaceNode MetricNode(string id, string label, string value) =>
-        new()
-        {
-            Id = id,
-            Kind = "metric",
-            Props = new GjallarSurfaceProps
-            {
-                Label = label,
-                Value = value,
-                Text = $"{label}: {value}",
-            },
-            Children = [],
-        };
-
-    private static GjallarSurfaceNode TextNode(string id, string text) =>
-        new()
-        {
-            Id = id,
-            Kind = "text",
-            Props = new GjallarSurfaceProps { Text = text },
-            Children = [],
-        };
-
     private GjallarRuntimeConfigRecord BuildRuntimeConfig(GjallarVersePulse pulse) =>
         new()
         {
             RecordId = RuntimeConfigKey.Value,
-            DaemonId = "nightwing-gjallar",
-            ServiceId = "gjallar.framebuffer-compositor",
-            VerseId = "nightwing.local",
+            DaemonId = "yggdrasil-gjallar",
+            ServiceId = "gjallar.compositor",
+            VerseId = "yggdrasil.local",
             FramebufferPath = config.FramebufferPath,
             Width = config.Width,
             Height = config.Height,
@@ -313,7 +199,7 @@ internal sealed class GjallarVerseRuntime : IDisposable
         new()
         {
             RecordId = FrameStatusKey.Value,
-            DaemonId = "nightwing-gjallar",
+            DaemonId = "yggdrasil-gjallar",
             Status = pulse.Status,
             Frames = pulse.Frames,
             PaintMs = Math.Round(pulse.PaintMs, 2),
@@ -356,10 +242,10 @@ internal sealed class GjallarVerseRuntime : IDisposable
         new()
         {
             RecordId = CommandBoundaryKey.Value,
-            DaemonId = "nightwing-gjallar",
+            DaemonId = "yggdrasil-gjallar",
             Mode = "read-only-runtime",
             WritesAccepted = false,
-            OperatorInputAuthority = "nightwing-local-framebuffer-mouse",
+            OperatorInputAuthority = "eve-client-command-boundaries",
             LifecycleAuthority = "idunn.local-command.restart + compatibility.systemd.gjallar.service",
             AcceptedCommands =
             [
@@ -379,7 +265,7 @@ internal sealed class GjallarVerseRuntime : IDisposable
         new()
         {
             RecordId = TransportProfileKey.Value,
-            DaemonId = "nightwing-gjallar",
+            DaemonId = "yggdrasil-gjallar",
             CurrentState = config.UsesOdinCultNetRudp
                 ? "rudp-input-health-and-provider-store-live"
                 : "partial-rudp-health-and-provider-store-live",
@@ -390,8 +276,8 @@ internal sealed class GjallarVerseRuntime : IDisposable
             WitnessPath = config.CultCachePath,
             StatusPath = config.StatusPath,
             CurrentCutLine = config.UsesOdinCultNetRudp
-                ? "Gjallar now consumes Odin's accepted provider state over CultNet/RUDP snapshot polling while preserving Gjallar-owned Nightwing composition and daemon-owned health publication."
-                : "Gjallar now owns the Nightwing CultCache witness and daemon health publication; Odin WebSocket deck input remains the explicit compatibility transport debt until the native C# CultNet/RUDP intake path lands.",
+                ? "Gjallar consumes Odin's accepted provider state over CultNet/RUDP snapshot polling and publishes the Yggdrasil aggregate with daemon-owned health."
+                : "Gjallar owns the Yggdrasil aggregate witness and daemon health publication; Odin WebSocket deck input remains explicit compatibility transport debt until native C# CultNet/RUDP intake lands.",
             UpdatedAt = pulse.ObservedAt.ToString("O", CultureInfo.InvariantCulture),
         };
 }
@@ -414,6 +300,7 @@ internal sealed class GjallarVersePulse
     public int CatalogProviders { get; set; }
     public int ComposedProviders { get; set; }
     public int StateBytes { get; set; }
+    public EveSurfaceDocument? OverviewSurface { get; set; }
     public int Panels { get; set; }
     public object[] PanelFontUsage { get; set; } = [];
     public int MinimizedPanels { get; set; }
@@ -569,53 +456,6 @@ internal sealed class GjallarTransportProfileRecord
     [Key(8)] public string StatusPath { get; set; } = string.Empty;
     [Key(9)] public string CurrentCutLine { get; set; } = string.Empty;
     [Key(10)] public string UpdatedAt { get; set; } = string.Empty;
-}
-
-[CultDocument("gamecult.eve.surface_state", "gamecult.eve.surface_state.v1")]
-[MessagePackObject(AllowPrivate = true)]
-internal sealed class GjallarSurfaceStateRecord
-{
-    [Key(0)]
-    [CultName]
-    public string RecordId { get; set; } = string.Empty;
-
-    [Key(1)] public string ProviderId { get; set; } = string.Empty;
-
-    [Key(2)] public string Title { get; set; } = string.Empty;
-    [Key(3)] public long Version { get; set; }
-    [Key(4)] public string UpdatedAt { get; set; } = string.Empty;
-    [Key(5)] public GjallarSurfaceDocument Surface { get; set; } = new();
-}
-
-[MessagePackObject(AllowPrivate = true)]
-internal sealed class GjallarSurfaceDocument
-{
-    [Key(0)] public string Schema { get; set; } = "gamecult.eve.surface.v1";
-    [Key(1)] public string Id { get; set; } = string.Empty;
-    [Key(2)] public string Title { get; set; } = string.Empty;
-    [Key(3)] public GjallarSurfaceNode Root { get; set; } = new();
-    [Key(4)] public object[] Assets { get; set; } = [];
-}
-
-[MessagePackObject(AllowPrivate = true)]
-internal sealed class GjallarSurfaceNode
-{
-    [Key(0)] public string Id { get; set; } = string.Empty;
-    [Key(1)] public string Kind { get; set; } = string.Empty;
-    [Key(2)] public GjallarSurfaceProps Props { get; set; } = new();
-    [Key(3)] public GjallarSurfaceNode[] Children { get; set; } = [];
-}
-
-[MessagePackObject(AllowPrivate = true)]
-internal sealed class GjallarSurfaceProps
-{
-    [Key(0)] public string Title { get; set; } = string.Empty;
-    [Key(1)] public string Text { get; set; } = string.Empty;
-    [Key(2)] public string Label { get; set; } = string.Empty;
-    [Key(3)] public string Value { get; set; } = string.Empty;
-    [Key(4)] public string Status { get; set; } = string.Empty;
-    [Key(5)] public string Summary { get; set; } = string.Empty;
-    [Key(6)] public string Detail { get; set; } = string.Empty;
 }
 
 [MessagePackObject(AllowPrivate = true)]

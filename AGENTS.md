@@ -1,11 +1,11 @@
 # Gjallar Agent Instructions
 
-Gjallar is a framebuffer-native, multi-scale TUI compositor.
+Gjallar is the renderer-neutral compositor for Odin-visible Eve surfaces.
 
 Do not treat this repo as an Odin subfolder, a Nightwing deployment script, a
-terminal multiplexer clone, or a dashboard skin. Gjallar owns the product kernel
-for weighted pane partitioning, per-pane virtual text grids, font-scale
-selection, framebuffer lowering, and future sparse cell/glyph/dirty-rect pipes.
+terminal multiplexer clone, or a dashboard skin. Gjallar owns aggregation,
+tiling, and layout intent. Eve clients and optional TUI/framebuffer backends own
+pixel lowering.
 
 ## Session Bootstrap
 
@@ -21,14 +21,16 @@ Then restate the current owner map before making nontrivial changes.
 
 - Odin sees: Verse discovery, provider cataloging, schemas, routes, and accepted
   provider/proxy surfaces.
-- Gjallar shows: overview composition, panel packing, density, text resolution,
-  framebuffer/cell lowering, and display telemetry.
-- Nightwing hosts: the physical machine/body currently running `gjallar.service`.
+- Gjallar composes: overview membership, tiling, density, layout intent, and
+  aggregate-surface publication.
+- Yggdrasil hosts: the headless daemon beside Odin and Idunn.
+- Eve clients lower: UIKit, browser, TUI, framebuffer, and future display bodies.
 - Providers speak: each upstream surface owns its own truth.
 
-If Odin starts deciding where panels go on Nightwing, ownership leaked upward.
-If providers start shaping themselves for Nightwing instead of publishing clean
-surfaces, ownership leaked downward.
+If Odin starts deciding where panels go, ownership leaked upward. If Gjallar
+opens a framebuffer in daemon mode, ownership leaked downward into a client
+body. If providers tune themselves for a renderer instead of publishing clean
+surfaces, ownership leaked into the provider.
 
 ## Research Habit
 
