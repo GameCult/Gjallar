@@ -74,7 +74,8 @@ SurfaceSource[]
 
 Backends:
 
-- `FramebufferBackend`: full BGRA frame writes, current implementation.
+- `FramebufferBackend`: optional retained debug/test lowering for full BGRA
+  frame writes; it is not the Yggdrasil daemon body.
 - `SparseCellBackend`: dirty cell/glyph/rect pipe for high-frequency remote or
   terminal targets.
 - `AgentTextBackend`: token-efficient navigation and panel capture for agents.

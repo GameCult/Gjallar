@@ -15,8 +15,8 @@ surface sources
   -> weighted pane tree
   -> per-pane virtual text grids
   -> per-pane font and cell resolution
-  -> framebuffer frames now
-  -> sparse cell / glyph / dirty-rect pipes later
+  -> typed gjallar.overview publication now
+  -> optional framebuffer / sparse cell / agent lowerings
 ```
 
 ## Body

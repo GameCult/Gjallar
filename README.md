@@ -19,8 +19,8 @@ surface sources
   -> weighted pane tree
   -> per-pane virtual text grids
   -> per-pane font and cell resolution
-  -> framebuffer frames today
-  -> sparse cell / glyph / dirty-rect pipes tomorrow
+  -> typed gjallar.overview publication today
+  -> optional framebuffer / sparse cell / agent lowerings
 ```
 
 It is not curses, tmux, or a web dashboard. Those are useful ancestors and
