@@ -3088,6 +3088,7 @@ internal static class GjallarOdinProviderPublisher
             },
         };
         transport.SendSchema(CultNetSchemaMessageSerialization.Serialize(surfaceMessage));
+        transport.FlushReliable(TimeSpan.FromSeconds(5));
     }
 
     private static IPEndPoint ParseEndpoint(string value)
