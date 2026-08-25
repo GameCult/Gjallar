@@ -105,9 +105,9 @@ internal sealed class GjallarVerseRuntime : IDisposable
                 },
                 new GjallarAdvertisedSchema
                 {
-                    SchemaId = "gamecult.eve.surface.v1",
+                    SchemaId = "gamecult.eve.surface_state.v1",
                     Owner = "gjallar.runtime",
-                    Description = "Gjallar-owned aggregate containing every currently visible provider surface accepted by Odin.",
+                    Description = "Gjallar-owned aggregate surface state containing every currently visible provider surface accepted by Odin.",
                 },
                 new GjallarAdvertisedSchema
                 {
@@ -151,7 +151,7 @@ internal sealed class GjallarVerseRuntime : IDisposable
                     Schemas =
                     [
                         "gamecult.eve.provider_advertisement.v1",
-                        "gamecult.eve.surface.v1",
+                        "gamecult.eve.surface_state.v1",
                         "gjallar.runtime_config.v0",
                         "gjallar.frame_status.v0",
                         "gjallar.command_boundary.v0",

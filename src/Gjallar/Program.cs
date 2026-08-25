@@ -817,6 +817,8 @@ internal sealed class GjallarRenderer : IDisposable
                 updatedAt = ResolveFrameUpdatedAt(frame),
                 layout = new
                 {
+                    visible = true,
+                    weight = 1.0,
                     density = "dense",
                     viewportMode = "nested-scroll",
                 },
@@ -847,6 +849,11 @@ internal sealed class GjallarRenderer : IDisposable
                         title = "Gjallar",
                         summary = $"{aggregateFrames.Length} provider surfaces",
                         marqueeText = catalog.MarqueeText ?? "",
+                        layout = new
+                        {
+                            mode = "weighted-bisect",
+                            gap = 8,
+                        },
                     },
                     children,
                 },
@@ -869,6 +876,8 @@ internal sealed class GjallarRenderer : IDisposable
             Array.Empty<EveEmbeddedDocumentSlot>(),
             new Dictionary<string, string>(StringComparer.Ordinal)
             {
+                ["visible"] = "true",
+                ["weight"] = "1",
                 ["density"] = "dense",
                 ["viewportMode"] = "nested-scroll",
             })).ToArray();
@@ -881,7 +890,14 @@ internal sealed class GjallarRenderer : IDisposable
                 ["summary"] = $"{aggregateFrames.Length} provider surfaces",
                 ["marqueeText"] = catalog.MarqueeText ?? "",
             },
-            componentChildren);
+            componentChildren,
+            Array.Empty<GameCult.Mesh.CultMeshStateBindingDescriptor>(),
+            Array.Empty<EveEmbeddedDocumentSlot>(),
+            new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["mode"] = "weighted-bisect",
+                ["gap"] = "8",
+            });
         var surface = new EveSurfaceDocument(
             "surface-state",
             EveSurfaceDocument.SchemaId,
@@ -3048,16 +3064,24 @@ internal static class GjallarOdinProviderPublisher
             },
         };
         transport.SendSchema(CultNetSchemaMessageSerialization.Serialize(message));
+        var surfaceState = new GjallarSurfaceStateRecord
+        {
+            ProviderId = surface.ProviderId,
+            Title = surface.Title,
+            Version = surface.Version,
+            UpdatedAt = surface.UpdatedAtUtc,
+            Surface = surface.Surface,
+        };
         var surfaceMessage = new CultNetDocumentPutRawMessage
         {
             MessageId = $"gjallar-surface:{surface.ProviderId}:{surface.Version}",
             Document = new CultNetRawDocumentRecord
             {
-                SchemaId = EveSurfaceDocument.SchemaId,
+                SchemaId = "gamecult.eve.surface_state.v1",
                 RecordKey = surface.ProviderId,
                 StoredAt = surface.UpdatedAtUtc,
                 PayloadEncoding = "messagepack",
-                Payload = MessagePackSerializer.Serialize(surface, CultNetSchemaMessageSerialization.Options),
+                Payload = MessagePackSerializer.Serialize(surfaceState, CultNetSchemaMessageSerialization.Options),
                 SourceRuntimeId = sourceRuntimeId,
                 SourceRole = "gjallar.compositor",
                 Tags = ["aggregate-surface", "odin-visible-providers"],
@@ -3093,6 +3117,16 @@ internal static class GjallarOdinProviderPublisher
             throw new ArgumentException($"Odin CultMesh/RUDP endpoint host has no IPv4 address: {host}", nameof(value));
         return new IPEndPoint(address, port);
     }
+}
+
+[MessagePackObject(AllowPrivate = true)]
+internal sealed class GjallarSurfaceStateRecord
+{
+    [Key(0)] public string ProviderId { get; set; } = "";
+    [Key(1)] public string Title { get; set; } = "";
+    [Key(2)] public long Version { get; set; }
+    [Key(3)] public string UpdatedAt { get; set; } = "";
+    [Key(4)] public EveSurfaceTree Surface { get; set; } = new("", new EveSurfaceComponent("", "surface", new Dictionary<string, string>(), []), []);
 }
 
 internal readonly record struct ColorBgra(byte R, byte G, byte B)
