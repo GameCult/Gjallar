@@ -78,13 +78,26 @@ ln -sfn "$release" "$current.next"
 mv -Tf "$current.next" "$current"
 install -d -o gjallar -g gjallar -m 0750 "$state_root"
 systemctl daemon-reload
-if ! systemctl enable --now gjallar-yggdrasil.service || ! systemctl is-active --quiet gjallar-yggdrasil.service; then
+if ! systemctl enable gjallar-yggdrasil.service ||
+   ! systemctl restart gjallar-yggdrasil.service ||
+   ! systemctl is-active --quiet gjallar-yggdrasil.service; then
   if [ -n "$previous" ] && [ -d "$previous" ]; then
     ln -sfn "$previous" "$current.next"
     mv -Tf "$current.next" "$current"
     systemctl restart gjallar-yggdrasil.service || true
   fi
   echo "Gjallar Yggdrasil activation failed." >&2
+  exit 1
+fi
+main_pid="$(systemctl show gjallar-yggdrasil.service -p MainPID --value)"
+active_executable="$(readlink -f "/proc/$main_pid/exe" 2>/dev/null || true)"
+if [ "$active_executable" != "$release/Gjallar" ]; then
+  if [ -n "$previous" ] && [ -d "$previous" ]; then
+    ln -sfn "$previous" "$current.next"
+    mv -Tf "$current.next" "$current"
+    systemctl restart gjallar-yggdrasil.service || true
+  fi
+  echo "Gjallar active executable does not match the selected release." >&2
   exit 1
 fi
 
