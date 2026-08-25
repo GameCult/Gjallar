@@ -236,5 +236,5 @@ AgentTextBackend
   glyph runs?
 - How should an agent navigate the same composed model without reading a full
   framebuffer dump?
-- When should Gjallar publish its own state as CultCache `.cc` instead of only
-  status JSON?
+- Which provider publication/admission gap is keeping the live aggregate at
+  zero readable Eve surfaces, and what adjacent typed handoff should prove it?
