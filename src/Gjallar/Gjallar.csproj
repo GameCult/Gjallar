@@ -1,5 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
+    <CultLibRoot Condition="'$(CultLibRoot)' == ''">$(MSBuildThisFileDirectory)..\..\..\CultLib</CultLibRoot>
     <OutputType>Exe</OutputType>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -9,8 +10,8 @@
     <RootNamespace>Gjallar</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="..\..\..\CultMath\src\CultMath\CultMath.csproj" />
-    <ProjectReference Include="..\..\..\CultLib\src\GameCult.Networking\GameCult.Networking.csproj" />
+    <ProjectReference Include="$(CultLibRoot)\packages\cultmath\src\CultMath\CultMath.csproj" />
+    <ProjectReference Include="$(CultLibRoot)\src\GameCult.Networking\GameCult.Networking.csproj" />
     <ProjectReference Include="..\..\..\Eve\packages\org.gamecult.eve.surface\GameCult.Eve.Surface.csproj" />
   </ItemGroup>
   <ItemGroup>

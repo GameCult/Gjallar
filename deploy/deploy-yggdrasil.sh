@@ -37,10 +37,8 @@ archive_repo() {
 }
 
 archive_repo Gjallar "$source_commit"
-cultmath_commit="$(tr -d '\r\n' < "$workspace/Gjallar/deploy/cultmath.commit")"
 cultlib_commit="$(tr -d '\r\n' < "$workspace/Gjallar/deploy/cultlib.commit")"
 eve_commit="$(tr -d '\r\n' < "$workspace/Gjallar/deploy/eve.commit")"
-archive_repo CultMath "$cultmath_commit"
 archive_repo CultLib "$cultlib_commit"
 archive_repo Eve "$eve_commit"
 
@@ -65,7 +63,6 @@ if [ ! -d "$release" ]; then
   printf '%s\n' \
     'schema_version=gamecult.gjallar.deployment_manifest.v2' \
     "source_commit=$source_commit" \
-    "cultmath_commit=$cultmath_commit" \
     "cultlib_commit=$cultlib_commit" \
     "eve_commit=$eve_commit" \
     "sdk_image=$sdk_image" \

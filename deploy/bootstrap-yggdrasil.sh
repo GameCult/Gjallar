@@ -18,7 +18,6 @@ clone_for_idunn() {
 }
 
 clone_for_idunn Gjallar https://github.com/GameCult/Gjallar.git
-clone_for_idunn CultMath https://github.com/GameCult/CultMath.git
 clone_for_idunn CultLib https://github.com/GameCult/CultLib.git
 clone_for_idunn Eve https://github.com/GameCult/Eve.git
 
