@@ -291,11 +291,9 @@ internal sealed class GjallarVersePulse
     public FrameTimings Timings { get; set; }
     public DateTimeOffset ObservedAt { get; set; }
     public string ReceiveStatus { get; set; } = "starting";
-    public string ReceiveAttemptStatus { get; set; } = "starting";
     public string ReceiveError { get; set; } = "";
     public string ProviderFetchError { get; set; } = "";
     public string ProviderFetchUri { get; set; } = "";
-    public string LastSuccessfulReceiveAt { get; set; } = "";
     public int ConsecutiveReceiveFailures { get; set; }
     public int CatalogProviders { get; set; }
     public int ComposedProviders { get; set; }

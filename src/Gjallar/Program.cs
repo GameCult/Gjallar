@@ -1321,11 +1321,9 @@ internal sealed class GjallarRenderer : IDisposable
             Timings = timings,
             ObservedAt = started,
             ReceiveStatus = EffectiveReceiveStatus(started),
-            ReceiveAttemptStatus = lastReceiveAttemptStatus,
             ReceiveError = lastReceiveError,
             ProviderFetchError = lastProviderFetchError,
             ProviderFetchUri = lastProviderFetchUri,
-            LastSuccessfulReceiveAt = lastSuccessfulCatalogReceiveObservedAt,
             ConsecutiveReceiveFailures = consecutiveCatalogReceiveFailures,
             CatalogProviders = latestCatalogProviders,
             ComposedProviders = latestComposedProviders,
@@ -1666,8 +1664,6 @@ internal sealed class FrameDocument
             Pixels[i + 3] = 255;
         }
     }
-
-    public void CopyFrom(byte[] pixels) => Buffer.BlockCopy(pixels, 0, Pixels, 0, Math.Min(pixels.Length, Pixels.Length));
 
     public void DrawPanel(PackedPanel panel, int frameIndex, int depth = 0)
     {
@@ -2373,14 +2369,7 @@ internal static class AabbPacker
 internal sealed record PackedPanel(EveNode Node, RectI Rect, float Weight, string Key, bool Minimized);
 internal readonly record struct RectI(int X, int Y, int Width, int Height)
 {
-    public float CenterX => X + Width * 0.5f;
-    public float CenterY => Y + Height * 0.5f;
     public bool Contains(int x, int y) => x >= X && x < X + Width && y >= Y && y < Y + Height;
-    public bool Intersects(RectI other) =>
-        X < other.X + other.Width &&
-        X + Width > other.X &&
-        Y < other.Y + other.Height &&
-        Y + Height > other.Y;
 }
 
 internal sealed class EveNode
