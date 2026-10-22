@@ -10,6 +10,19 @@ should share the same font, cadence, or scale.
 
 Call it a new kind of TUI if you want to be grandiose. We do.
 
+## Front Door
+
+- **Value:** a renderer-neutral compositor that tiles every Odin-visible Eve surface into one typed `gjallar.overview` document, with weighted panes and per-pane text resolution, so GUI, TUI, framebuffer and agent clients lower one layout instead of each inventing their own.
+- **Problem:** dashboards assume a browser and terminals assume one cell grid; a live machine room needs panes of different density and scale on one display, with membership and layout owned in one place.
+- **Entry points:**
+  - `src/Gjallar/Program.cs`: the executable. `GjallarConfig` (flags), `GjallarRenderer` (receive loop and aggregate composition), `AabbPacker` (weighted region partitioning), `EveNode`, `FontAtlas`/`PsfFont` and `FramebufferDevice` all live in this one file today.
+  - `src/Gjallar/VerseState.cs`: the CultCache/CultMesh/CultNet side.
+  - `docs/architecture.md`: authority map (what Gjallar owns, reads and may not write).
+  - `deploy/deploy-yggdrasil.sh` and `systemd/gjallar-yggdrasil.service`: the Yggdrasil deployment body.
+  - Build: `dotnet build src/Gjallar/Gjallar.csproj` (see Current Runtime and Building against CultLib).
+- **Live:** the headless composition daemon on Yggdrasil. It reads Odin's accepted provider snapshot over CultNet/RUDP, publishes `gjallar.overview` through CultCache/CultMesh, and reports composition health to Idunn.
+- **Planned:** an explicit `GjallarOverview -> PaneTree -> PaneGrid -> RenderPlan` model with framebuffer, sparse-cell and agent-text backends (some of it is still implicit in the renderer), and approved 16/12/10 raster font atlases. The framebuffer backend is a debug lowering, not part of the daemon.
+
 ## What It Is
 
 Gjallar is a tiling window manager for semantic text surfaces:
